@@ -1,0 +1,9 @@
+requests
+feedparser
+beautifulsoup4
+langchain-openai
+langchain-core
+python-dotenv
+tiktoken
+schedule
+feedgen
