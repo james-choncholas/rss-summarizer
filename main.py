@@ -1,53 +1,62 @@
+import argparse
+import datetime
+import feedgen
+import http.server
+import json
+import logging # Added
 import os
+import schedule
+import socketserver
+import threading
+import time
+import tiktoken # Add this import for token counting
+
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-from langchain_openai import ChatOpenAI
+from dotenv import load_dotenv
+from feedgen.feed import FeedGenerator
 from langchain.prompts import ChatPromptTemplate
 # from langchain.chains.summarize import load_summarize_chain # Alternative for long docs
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
-from dotenv import load_dotenv
-import argparse
-import time  # To add delays between requests
-import tiktoken  # Add this import for token counting
-import schedule # Added
-import datetime # Added
-import json # Added for saving/loading processed IDs
-import feedgen # Added for RSS feed generation
-from feedgen.feed import FeedGenerator # Added for RSS feed generation
-import datetime # Ensure datetime is available for feed generation
-import os # Ensure os is available for path checking
-import threading # Added for HTTP server
-import http.server # Added for HTTP server
-import socketserver # Added for HTTP server
+from langchain_openai import ChatOpenAI
 
-# --- Configuration ---
-# Load environment variables (especially OPENAI_API_KEY)
-load_dotenv()
 
-# Check if API key is available
-if not os.getenv("OPENAI_API_KEY"):
+# --- Configuration & Constants ---
+load_dotenv() # Load environment variables first
+
+# --- Environment & API ---
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
     raise ValueError("OPENAI_API_KEY not found in environment variables. Please set it in the .env file.")
 
-# --- Constants ---
-REQUEST_DELAY_SECONDS = 1  # Delay between fetching full articles to be polite
+# --- Behavior ---
+REQUEST_DELAY_SECONDS = 1  # Delay between fetching full articles
 REQUEST_TIMEOUT_SECONDS = 15 # Timeout for fetching article content
-USER_AGENT = "RSSSummarizerBot/1.0 (+https://github.com/your-repo/rss-summarizer)" # Be a good citizen
-PROCESSED_IDS_FILE = "processed_article_ids.json" # File to store processed article IDs
+USER_AGENT = "RSSSummarizerBot/1.0 (+https://github.com/your-repo/rss-summarizer)" # User agent for requests
 CHECK_INTERVAL_MINUTES = 30 # How often to check the feed (in minutes)
-SUMMARY_TIME = "17:00" # Time to run the daily summary
-MAX_TOKENS = 4096 # Maximum number of tokens for the LLM
-# Default values for the output RSS feed
+SUMMARY_TIME = "17:00" # Time to run the daily summary (HH:MM)
+MAX_TOKENS = 4096 # Max tokens for the LLM input (including prompt)
+
+# --- Files & Paths ---
+PROCESSED_IDS_FILE = "processed_article_ids.json" # File to store processed article IDs
+
+# --- Output Feed Defaults ---
 DEFAULT_OUTPUT_FEED_FILE = "summary_feed.xml"
 DEFAULT_OUTPUT_FEED_TITLE = "Daily RSS Summary"
-DEFAULT_OUTPUT_FEED_LINK = "http://localhost/summary_feed.xml" # Placeholder link
+DEFAULT_OUTPUT_FEED_LINK = "http://localhost:8000/summary_feed.xml" # Default includes port now
 DEFAULT_OUTPUT_FEED_DESC = "A daily summary of articles from monitored RSS feeds."
-# Default port for the HTTP server
+
+# --- Server ---
 DEFAULT_SERVER_PORT = 8000
 
+# --- Logging Setup ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# --- Global State ---
+
+# --- Global State (To be refactored/minimized later) ---
 processed_ids = set()
 new_articles_buffer = [] # Stores (entry, content_to_summarize) tuples
 
@@ -62,7 +71,7 @@ def load_processed_ids(filename=PROCESSED_IDS_FILE):
         else:
             return set()
     except (IOError, json.JSONDecodeError) as e:
-        print(f"Warning: Could not load processed IDs from {filename}: {e}. Starting fresh.")
+        logger.warning(f"Could not load processed IDs from {filename}: {e}. Starting fresh.")
         return set()
 
 def save_processed_ids(ids_set, filename=PROCESSED_IDS_FILE):
@@ -71,20 +80,20 @@ def save_processed_ids(ids_set, filename=PROCESSED_IDS_FILE):
         with open(filename, 'w') as f:
             json.dump(list(ids_set), f) # Convert set to list for JSON serialization
     except IOError as e:
-        print(f"Error saving processed IDs to {filename}: {e}")
+        logger.error(f"Error saving processed IDs to {filename}: {e}")
 
 def fetch_rss_feed(feed_url):
     """Fetches and parses the RSS feed."""
-    print(f"Fetching RSS feed: {feed_url}")
+    logger.info(f"Fetching RSS feed: {feed_url}")
     try:
         feed = feedparser.parse(feed_url)
         if feed.bozo:
-            print(f"Warning: Feed may be malformed. Bozo reason: {feed.bozo_exception}")
+            logger.warning(f"Feed may be malformed. Bozo reason: {feed.bozo_exception}")
         if not feed.entries:
-            print("Warning: No entries found in the feed.")
+            logger.warning("No entries found in the feed.")
         return feed.entries
     except Exception as e:
-        print(f"Error fetching or parsing feed {feed_url}: {e}")
+        logger.error(f"Error fetching or parsing feed {feed_url}: {e}")
         return []
 
 def count_tokens(text, model="gpt-3.5-turbo"):
@@ -99,13 +108,14 @@ def clean_text(text):
         return text
     # Remove extra whitespace and normalize newlines
     cleaned = " ".join(text.split())
-    # Ensure reasonable paragraph breaks
-    cleaned = cleaned.replace(" . ", ". ")
+    # Basic punctuation spacing correction
+    cleaned = cleaned.replace(" .", ".").replace(" ,", ",").replace(" ?", "?").replace(" !", "!")
+    # Could add more sophisticated cleaning here if needed
     return cleaned
 
 def fetch_article_content(url):
     """Fetches and extracts plain text content from an article URL."""
-    print(f"  Fetching article content: {url}")
+    logger.info(f"  Fetching article content: {url}")
     try:
         headers = {'User-Agent': USER_AGENT}
         response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS, headers=headers)
@@ -125,11 +135,11 @@ def fetch_article_content(url):
             text_elements = article_body.find_all(['p', 'li', 'h1', 'h2', 'h3'])
         else:
             # 2. Fallback: Get all paragraphs from the body
-            print("  Warning: Specific article container not found, falling back to all <p> tags.")
+            logger.warning("  Specific article container not found, falling back to all <p> tags.")
             text_elements = soup.find_all('p')
 
         if not text_elements:
-            print(f"  Warning: No text paragraphs found for {url}")
+            logger.warning(f"  No text paragraphs found for {url}")
             return None
 
         # Join text, preserving some structure by adding newlines between elements
@@ -137,19 +147,19 @@ def fetch_article_content(url):
         return clean_text(content) # Clean the final joined text
 
     except requests.exceptions.RequestException as e:
-        print(f"  Error fetching article {url}: {e}")
+        logger.error(f"  Error fetching article {url}: {e}")
         return None
     except Exception as e:
-        print(f"  Error parsing article {url}: {e}")
+        logger.error(f"  Error parsing article {url}: {e}")
         return None
 
 def summarize_text_with_langchain(text_to_summarize, llm):
     """Summarizes the given text using LangChain."""
     if not text_to_summarize:
-         print("  Skipping summary for empty text.")
+         logger.info("  Skipping summary for empty text.")
          return "Content unavailable to summarize."
 
-    print("  Summarizing text...")
+    logger.info("  Summarizing text...")
 
     # Check token count BEFORE creating prompt/chain
     # Estimate max tokens for the prompt itself
@@ -158,13 +168,13 @@ def summarize_text_with_langchain(text_to_summarize, llm):
     text_tokens = count_tokens(text_to_summarize)
 
     if text_tokens > available_tokens_for_text:
-        print(f"  Warning: Text ({text_tokens} tokens) too long for model's {MAX_TOKENS} limit (estimated). Truncating...")
+        logger.warning(f"  Warning: Text ({text_tokens} tokens) too long for model's {MAX_TOKENS} limit (estimated). Truncating...")
         # Simple truncation based on estimated character ratio
         # A more robust method might involve token-aware truncation
         estimated_chars_per_token = len(text_to_summarize) / text_tokens
         max_chars = int(available_tokens_for_text * estimated_chars_per_token * 0.95) # 5% buffer
         text_to_summarize = text_to_summarize[:max_chars]
-        print(f"  Truncated text to ~{count_tokens(text_to_summarize)} tokens.")
+        logger.warning(f"  Truncated text to ~{count_tokens(text_to_summarize)} tokens.")
 
 
     # Use a slightly more robust prompt
@@ -180,11 +190,11 @@ def summarize_text_with_langchain(text_to_summarize, llm):
 
     try:
         summary = chain.invoke({"text": text_to_summarize})
-        print("  Summary generated.")
+        logger.info("  Summary generated.")
         # Basic post-processing: remove potential leading/trailing whitespace
         return summary.strip()
     except Exception as e:
-        print(f"  Error during summarization: {e}")
+        logger.error(f"  Error during summarization: {e}")
         # Consider more specific error handling (e.g., context length exceeded)
         # You might want to check for specific error types from OpenAI/Langchain
         if "context_length_exceeded" in str(e).lower():
@@ -193,74 +203,75 @@ def summarize_text_with_langchain(text_to_summarize, llm):
 
 # --- Core Logic ---
 
-def check_feed(feed_url, use_feed_summary):
-    """Checks the feed for new articles and adds them to the buffer."""
-    global processed_ids, new_articles_buffer
-    print(f"\n[{datetime.datetime.now()}] Checking feed: {feed_url}")
+def check_feed(feed_url, use_feed_summary, processed_ids):
+    """Checks the feed for new articles and adds them to a buffer."""
+    logger.info(f"Checking feed: {feed_url}")
     entries = fetch_rss_feed(feed_url)
-    new_count = 0
+    new_entries_found = [] # Local buffer for this check run
+    updated_processed_ids = processed_ids.copy() # Work on a copy
 
     for entry in entries:
         article_id = entry.get('guid') or entry.get('id') or entry.get('link')
         if not article_id:
-            print(f"  Warning: Skipping entry with no guid, id, or link: {entry.get('title', 'No Title')}")
+            logger.warning(f"  Skipping entry with no guid, id, or link: {entry.get('title', 'No Title')}")
             continue
 
-        if article_id not in processed_ids:
+        if article_id not in updated_processed_ids:
             title = entry.get('title', 'No Title')
             link = entry.get('link')
-            print(f"  Found new article: {title}")
-            processed_ids.add(article_id)
-            new_count += 1
+            logger.info(f"  Found new article: {title}")
+            updated_processed_ids.add(article_id)
 
             content_to_summarize = None
             if use_feed_summary:
-                print("    Using summary/description from feed entry.")
+                logger.info("    Using summary/description from feed entry.")
                 content_to_summarize = entry.get('summary') or entry.get('description')
                 if not content_to_summarize:
-                     print("    Warning: No summary/description found in feed entry.")
+                     logger.warning("    No summary/description found in feed entry.")
             elif link:
                  # Fetch content immediately if not using feed summary
                  content_to_summarize = fetch_article_content(link)
                  time.sleep(REQUEST_DELAY_SECONDS) # Delay even if fetch fails
                  if not content_to_summarize:
-                      print(f"    Warning: Failed to fetch content for '{title}'.")
+                      logger.warning(f"    Failed to fetch content for '{title}'.")
             else:
-                 print(f"    Warning: No link found for '{title}' and not using feed summary.")
+                 logger.warning(f"    No link found for '{title}' and not using feed summary.")
 
 
             # Buffer the entry and the content (even if None)
-            new_articles_buffer.append((entry, content_to_summarize))
-        # else: # No need for this else block now
-            # print(f"  Skipping already processed article: {entry.get('title', 'No Title')}")
-            # pass
+            new_entries_found.append((entry, content_to_summarize))
+            # else: # No need for this else block now
+            # logger.info(f"  Skipping already processed article: {entry.get('title', 'No Title')}")
+            # pass # Keep pass here to make diff smaller
 
-    print(f"Finished checking feed. Found {new_count} new articles.")
-    if new_count > 0:
-         save_processed_ids(processed_ids)
+    logger.info(f"Finished checking feed. Found {len(new_entries_found)} new articles.")
+    if new_entries_found:
+         save_processed_ids(updated_processed_ids)
+
+    # Return the new entries found and the updated set of processed IDs
+    return new_entries_found, updated_processed_ids
 
 
-def summarize_new_articles(llm, output_feed_file, output_feed_title, output_feed_link, output_feed_description):
+def summarize_new_articles(llm, output_feed_file, output_feed_title, output_feed_link, output_feed_description, articles_to_process, processed_ids):
     """Combines and summarizes articles, then adds the summary as a new entry to an RSS feed."""
-    global processed_ids, new_articles_buffer
-    print(f"\n[{datetime.datetime.now()}] Starting scheduled summarization and feed generation...")
+    logger.info(f"Starting scheduled summarization and feed generation...")
 
-    if not new_articles_buffer:
-        print("No new articles in the buffer to summarize.")
-        return
+    if not articles_to_process:
+        logger.info("No new articles in the buffer to summarize.")
+        return processed_ids # Return the unchanged processed_ids
 
-    print(f"Preparing summary for {len(new_articles_buffer)} new articles/entries...")
+    logger.info(f"Preparing summary for {len(articles_to_process)} new articles/entries...")
     articles_processed_this_run = set()
     combined_content_parts = []
     articles_included_count = 0
     first_article_link = None # To use as a fallback link for the summary entry
+    updated_processed_ids = processed_ids.copy() # Work on a copy
 
-    buffer_copy = list(new_articles_buffer)
-    new_articles_buffer.clear() # Clear global buffer now that we have a copy
+    # No need to clear a global buffer now
 
-    print("-" * 60)
-    print("Articles included in this summary batch:")
-    for entry, content_to_summarize in buffer_copy:
+    logger.info("-" * 60)
+    logger.info("Articles included in this summary batch:")
+    for entry, content_to_summarize in articles_to_process: # Use the passed list directly
         title = entry.get('title', 'No Title')
         link = entry.get('link', 'No Link')
         # Use link as ID if guid/id are missing, crucial for processed_ids tracking
@@ -274,21 +285,21 @@ def summarize_new_articles(llm, output_feed_file, output_feed_title, output_feed
             articles_processed_this_run.add(article_id)
         else:
             # If no ID, we can't reliably mark it processed. Log warning.
-            print(f"  Warning: Could not determine a unique ID for article '{title}'. It may be reprocessed if it appears again.")
+            logger.warning(f"  Could not determine a unique ID for article '{title}'. It may be reprocessed if it appears again.")
 
         if content_to_summarize:
-            print(f"  - {title} ({link})")
+            logger.info(f"  - {title} ({link})")
             # Format for combining. Add more context if needed.
             formatted_article = f"Title: {title}\nLink: {link}\n\n{content_to_summarize}\n\n---\n\n"
             combined_content_parts.append(formatted_article)
             articles_included_count += 1
         else:
             # Still log the article title even if skipped for content
-            print(f"  - Skipping content for '{title}' ({link}) - No content was fetched or found in feed.")
+            logger.info(f"  - Skipping content for '{title}' ({link}) - No content was fetched or found in feed.")
 
     combined_summary = "No summary generated (no content available)." # Default
     if combined_content_parts:
-        print(f"\nGenerating combined summary for {articles_included_count} articles...")
+        logger.info(f"Generating combined summary for {articles_included_count} articles...")
         combined_content = "".join(combined_content_parts)
         # Simplified prompt prefix
         summary_prompt_prefix = f"Provide a concise combined summary of the following {articles_included_count} articles:\n\n"
@@ -298,22 +309,22 @@ def summarize_new_articles(llm, output_feed_file, output_feed_title, output_feed
         combined_summary = summarize_text_with_langchain(full_text_to_summarize, llm)
 
         # Print summary to console as well for logging/debugging
-        print("\n--- Combined Daily Summary (for log) ---")
-        print(combined_summary)
-        print("--- End of Summary ---")
+        logger.info("--- Combined Daily Summary ---")
+        logger.info(combined_summary)
+        logger.info("--- End of Summary ---")
     else:
-        print("\nNo content available from buffered articles to generate a combined summary.")
+        logger.info("No content available from buffered articles to generate a combined summary.")
         # Decide if we should still create a feed entry (e.g., "No new content summarized today")
         # For now, we'll skip creating an entry if there was absolutely no content.
-        print("Skipping RSS feed update as there was no content to summarize.")
+        logger.info("Skipping RSS feed update as there was no content to summarize.")
         # Still need to mark articles as processed
-        processed_ids.update(articles_processed_this_run)
-        save_processed_ids(processed_ids)
-        print(f"Finished scheduled run. Attempted to process {len(articles_processed_this_run)} unique article IDs. No feed generated.")
-        return # Exit the function early
+        updated_processed_ids.update(articles_processed_this_run)
+        save_processed_ids(updated_processed_ids)
+        logger.info(f"Finished scheduled run. Attempted to process {len(articles_processed_this_run)} unique article IDs. No feed generated.")
+        return updated_processed_ids # Return updated IDs
 
     # --- RSS Feed Generation ---
-    print(f"\nGenerating RSS feed entry and updating {output_feed_file}...")
+    logger.info(f"\nGenerating RSS feed entry and updating {output_feed_file}...")
     fg = FeedGenerator()
 
     # Initialize feed metadata (do this every time to potentially update it)
@@ -326,18 +337,35 @@ def summarize_new_articles(llm, output_feed_file, output_feed_title, output_feed
     # This ensures metadata is present even if loading fails or file is new
     if os.path.exists(output_feed_file):
         try:
-            # feedgen load_feed replaces existing metadata, so we load into a temp object
-            temp_fg = FeedGenerator()
-            temp_fg.load_feed(output_feed_file)
-            # Transfer old entries to the new fg object
-            for entry in temp_fg.entry():
-                fg.add_entry(entry)
-            print(f"  Loaded {len(fg.entry())} existing entries from feed file.")
+            # Parse the existing file using feedparser
+            existing_feed = feedparser.parse(output_feed_file)
+            if existing_feed.bozo:
+                logger.warning(f"  Existing feed file {output_feed_file} may be malformed. Bozo reason: {existing_feed.bozo_exception}. Will attempt to continue.")
+
+            # Add old entries to the new FeedGenerator object
+            for entry in existing_feed.entries:
+                old_fe = fg.add_entry() # Create a new entry object within our generator
+                old_fe.title(entry.get('title'))
+                old_fe.id(entry.get('id'))
+                # Use link attribute directly if present
+                if 'link' in entry:
+                     old_fe.link(href=entry.link) # feedparser typically gives 'link' attribute
+                # Handle published and updated dates (feedparser stores them as time_struct)
+                if entry.get('published_parsed'):
+                    old_fe.published(datetime.datetime(*entry.published_parsed[:6], tzinfo=datetime.timezone.utc)) # Assume UTC if parsed
+                if entry.get('updated_parsed'):
+                     old_fe.updated(datetime.datetime(*entry.updated_parsed[:6], tzinfo=datetime.timezone.utc)) # Assume UTC if parsed
+                # Handle content (feedparser puts it in a list)
+                if entry.get('content'):
+                     old_fe.content(entry.content[0].value, type=entry.content[0].type)
+                # Copy other potential fields if needed (e.g., author)
+
+            logger.info(f"  Loaded {len(existing_feed.entries)} existing entries from feed file.")
         except Exception as e:
-            print(f"  Warning: Could not load or parse existing feed file {output_feed_file}: {e}. Starting with a new feed.")
+            logger.warning(f"  Warning: Could not load or parse existing feed file {output_feed_file}: {e}. Starting with a new feed.", exc_info=True)
             # Proceed with the initialized fg object (new feed)
     else:
-         print("  No existing feed file found. Creating a new feed.")
+         logger.info("  No existing feed file found. Creating a new feed.")
 
 
     # Create a new feed entry for this summary
@@ -363,18 +391,21 @@ def summarize_new_articles(llm, output_feed_file, output_feed_title, output_feed
     # Save the updated feed
     try:
         fg.rss_file(output_feed_file, pretty=True) # Save as RSS 2.0
-        print(f"  Successfully updated RSS feed: {output_feed_file}")
+        logger.info(f"  Successfully updated RSS feed: {output_feed_file}")
     except Exception as e:
-        print(f"  Error saving RSS feed to {output_feed_file}: {e}")
+        logger.error(f"  Error saving RSS feed to {output_feed_file}: {e}")
 
     # Update the main processed set and save
-    processed_ids.update(articles_processed_this_run)
-    save_processed_ids(processed_ids)
+    updated_processed_ids.update(articles_processed_this_run)
+    save_processed_ids(updated_processed_ids)
 
-    print("-" * 60)
-    print(f"Finished scheduled summarization. Attempted to process {len(articles_processed_this_run)} unique article IDs.")
+    logger.info("-" * 60)
+    logger.info(f"Finished scheduled summarization. Attempted to process {len(articles_processed_this_run)} unique article IDs.")
     if combined_content_parts:
-         print(f"Successfully included content from {articles_included_count} articles in the combined summary generation.")
+         logger.info(f"Successfully included content from {articles_included_count} articles in the combined summary generation.")
+
+    return updated_processed_ids # Return the final updated set
+
 
 # --- HTTP Server ---
 
@@ -393,24 +424,65 @@ def run_http_server(port, directory="."):
     # Best practice: Pass the specific filename if needed, but SimpleHTTPRequestHandler serves all files.
 
     # Let's refine the print message slightly
-    print(f"[{datetime.datetime.now()}] Starting HTTP server on port {port} to serve files from the current directory.")
-    print(f"[{datetime.datetime.now()}] Access the generated feed typically at http://localhost:{port}/{DEFAULT_OUTPUT_FEED_FILE}")
+    logger.info(f"Starting HTTP server on port {port} to serve files from the current directory.")
+    logger.info(f"Access the generated feed typically at http://localhost:{port}/{DEFAULT_OUTPUT_FEED_FILE}")
 
     with socketserver.TCPServer(("", port), Handler) as httpd:
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
             # This might not be caught here if the main thread catches it first
-            print("\nHTTP server received KeyboardInterrupt (likely from main thread). Shutting down...")
+            logger.info("HTTP server received KeyboardInterrupt (likely from main thread). Shutting down...")
+        except Exception as e:
+            # Log unexpected errors in the server thread
+            logger.error(f"HTTP server error: {e}", exc_info=True)
         finally:
             # Ensure cleanup happens
             httpd.server_close() # Close the server socket
-            print(f"[{datetime.datetime.now()}] HTTP server on port {port} stopped.")
+            logger.info(f"HTTP server on port {port} stopped.")
+
+# --- Scheduling Wrappers ---
+
+# Global buffer to hold articles between checks and summarization
+# We keep this global for now as schedule doesn't easily pass state between jobs
+# A class-based approach would encapsulate this better.
+articles_buffer = []
+current_processed_ids = set()
+
+def scheduled_check_feed(feed_url, use_feed_summary):
+    """Wrapper function for scheduling feed checks."""
+    global articles_buffer, current_processed_ids
+    logger.debug("Running scheduled feed check...")
+    try:
+        new_entries, updated_ids = check_feed(feed_url, use_feed_summary, current_processed_ids)
+        articles_buffer.extend(new_entries) # Add new entries to the global buffer
+        current_processed_ids = updated_ids # Update the global set
+        logger.debug(f"Feed check complete. Buffer size: {len(articles_buffer)}, Processed IDs: {len(current_processed_ids)}")
+    except Exception as e:
+        logger.error(f"Error during scheduled feed check: {e}", exc_info=True)
+
+
+def scheduled_summarize(llm, output_feed_file, output_feed_title, output_feed_link, output_feed_description):
+    """Wrapper function for scheduling summarization."""
+    global articles_buffer, current_processed_ids
+    logger.debug("Running scheduled summarization...")
+    # Pass a copy of the buffer and clear the global one *before* processing
+    buffer_copy = list(articles_buffer)
+    articles_buffer.clear()
+    try:
+        updated_ids = summarize_new_articles(llm, output_feed_file, output_feed_title, output_feed_link, output_feed_description, buffer_copy, current_processed_ids)
+        current_processed_ids = updated_ids # Update the global set with the result
+        logger.debug(f"Summarization complete. Processed IDs: {len(current_processed_ids)}")
+    except Exception as e:
+        logger.error(f"Error during scheduled summarization: {e}", exc_info=True)
+        # Decide if we need to put buffer_copy back into articles_buffer on failure
+        # For now, we assume summarize_new_articles handles internal errors and updates processed_ids partially if needed.
 
 # --- Main Execution ---
 
 def main():
-    global processed_ids
+    # global processed_ids # No longer needed
+    global current_processed_ids # Still needed for the scheduler wrappers
 
     parser = argparse.ArgumentParser(description="Monitor an RSS feed, summarize new articles daily, publish to a new RSS feed, and serve it.")
     parser.add_argument("feed_url", help="The URL of the RSS feed to monitor.")
@@ -435,31 +507,34 @@ def main():
     try:
         datetime.datetime.strptime(args.summary_time, '%H:%M')
     except ValueError:
-        print(f"Error: Invalid summary_time format '{args.summary_time}'. Please use HH:MM (24-hour clock).")
+        logger.error(f"Invalid summary_time format '{args.summary_time}'. Please use HH:MM (24-hour clock).")
         exit(1)
 
 
-    processed_ids = load_processed_ids()
-    print(f"Loaded {len(processed_ids)} processed article IDs from {PROCESSED_IDS_FILE}.")
+    current_processed_ids = load_processed_ids() # Load initial IDs into the global set
+    logger.info(f"Loaded {len(current_processed_ids)} processed article IDs from {PROCESSED_IDS_FILE}.")
 
     llm = ChatOpenAI(
         model_name=args.model,
         temperature=args.temperature,
-        openai_api_key=os.getenv("OPENAI_API_KEY")
+        openai_api_key=OPENAI_API_KEY # Use the constant loaded earlier
     )
 
-    print("\n--- RSS Summarizer Bot Started ---")
-    print(f"Monitoring Feed: {args.feed_url}")
-    print(f"Checking every: {args.check_interval} minutes")
-    print(f"Daily Summary Time: {args.summary_time}")
-    print(f"Using feed summary directly: {args.use_feed_summary}")
-    print(f"LLM Model: {args.model}")
-    print(f"Output Feed File: {args.output_feed_file}")
-    print(f"Output Feed Title: {args.output_feed_title}")
-    print(f"Output Feed Link: {args.output_feed_link}")
-    print(f"Output Feed Description: {args.output_feed_description}")
-    print(f"Serving feed on port: {args.port}") # Added log for port
-    print("------------------------------------\n")
+    logger.info("--- RSS Summarizer Bot Started ---")
+    logger.info(f"Monitoring Feed: {args.feed_url}")
+    logger.info(f"Checking every: {args.check_interval} minutes")
+    logger.info(f"Daily Summary Time: {args.summary_time}")
+    logger.info(f"Using feed summary directly: {args.use_feed_summary}")
+    logger.info(f"LLM Model: {args.model}")
+    logger.info(f"Output Feed File: {args.output_feed_file}")
+    logger.info(f"Output Feed Title: {args.output_feed_title}")
+    # Update default link based on actual port
+    default_link = f"http://localhost:{args.port}/{args.output_feed_file}"
+    output_link = args.output_feed_link if args.output_feed_link != DEFAULT_OUTPUT_FEED_LINK else default_link
+    logger.info(f"Output Feed Link: {output_link}") # Use potentially updated link
+    logger.info(f"Output Feed Description: {args.output_feed_description}")
+    logger.info(f"Serving feed on port: {args.port}") # Added log for port
+    logger.info("------------------------------------")
 
     # --- Start HTTP Server in a separate thread ---
     server_thread = threading.Thread(
@@ -472,50 +547,58 @@ def main():
     time.sleep(0.5)
 
     # Perform an initial check immediately on startup
-    print(f"[{datetime.datetime.now()}] Performing initial feed check...")
-    check_feed(args.feed_url, args.use_feed_summary)
+    logger.info("Performing initial feed check...")
+    # Initial check now uses the scheduled wrapper to update global state correctly
+    scheduled_check_feed(args.feed_url, args.use_feed_summary)
 
-    # Define summary function with arguments bound using a dictionary
-    # This makes it clearer which arguments are being passed
+
+    # Define summary function arguments dictionary
     summary_kwargs = {
         'llm': llm,
         'output_feed_file': args.output_feed_file,
         'output_feed_title': args.output_feed_title,
-        'output_feed_link': args.output_feed_link,
+        'output_feed_link': output_link, # Pass the potentially updated link
         'output_feed_description': args.output_feed_description
     }
-    bound_summarize_func = lambda: summarize_new_articles(**summary_kwargs)
+    # No longer need bound_summarize_func, will call the wrapper
 
     if args.run_once:
-        print(f"\n[{datetime.datetime.now()}] Running summary immediately due to --run_once flag...")
-        bound_summarize_func() # Call the bound function
-        print(f"\n[{datetime.datetime.now()}] Run once complete. Feed generated and served at http://localhost:{args.port}/{args.output_feed_file}")
-        # Keep running to serve the file until Ctrl+C if run_once was used
-        print("Press Ctrl+C to stop serving.")
+        logger.info("Running summary immediately due to --run_once flag...")
+        # Call the scheduled wrapper which handles global state
+        scheduled_summarize(**summary_kwargs)
+        logger.info(f"Run once complete. Feed generated and served at {output_link}")
+        logger.info("Press Ctrl+C to stop serving.")
         try:
-            while True:
+            # Keep main thread alive only to keep server thread running
+            while server_thread.is_alive():
                 time.sleep(1)
         except KeyboardInterrupt:
-             print("\nExiting after run_once.")
+             logger.info("Exiting after run_once.")
         return
 
-    # Schedule the feed check
-    schedule.every(args.check_interval).minutes.do(check_feed, feed_url=args.feed_url, use_feed_summary=args.use_feed_summary)
+    # --- Setup Scheduling ---
+    # Schedule the feed check using the wrapper
+    schedule.every(args.check_interval).minutes.do(
+        scheduled_check_feed,
+        feed_url=args.feed_url,
+        use_feed_summary=args.use_feed_summary
+    )
 
-    # Schedule the daily summary using the bound function
-    schedule.every().day.at(args.summary_time).do(bound_summarize_func)
+    # Schedule the daily summary using the wrapper and kwargs
+    schedule.every().day.at(args.summary_time).do(scheduled_summarize, **summary_kwargs)
 
-    print(f"\n[{datetime.datetime.now()}] Scheduler started. Waiting for the next check (every {args.check_interval} mins) or summary time ({args.summary_time})...")
+
+    logger.info(f"Scheduler started. Waiting for the next check (every {args.check_interval} mins) or summary time ({args.summary_time})...")
     # Log the exact feed URL based on arguments
-    print(f"[{datetime.datetime.now()}] Feed will be available at http://localhost:{args.port}/{args.output_feed_file}")
+    logger.info(f"Feed will be available at {output_link}")
 
     # Main loop - now also implicitly keeps the server thread alive
     try:
         while True:
             schedule.run_pending()
-            # Check if the server thread is still alive (optional)
+            # Check if the server thread is still alive
             if not server_thread.is_alive():
-                 print(f"[{datetime.datetime.now()}] Error: HTTP server thread has stopped unexpectedly. Attempting restart...")
+                 logger.error("HTTP server thread has stopped unexpectedly. Attempting restart...")
                  # Attempt to restart the server thread
                  try:
                       server_thread = threading.Thread(target=run_http_server, args=(args.port,), daemon=True)
@@ -523,19 +606,22 @@ def main():
                       time.sleep(0.5) # Give it a moment
                       if not server_thread.is_alive(): # Check again
                            raise RuntimeError("Failed to restart server thread.")
-                      print(f"[{datetime.datetime.now()}] HTTP server thread restarted successfully.")
+                      logger.info("HTTP server thread restarted successfully.")
                  except Exception as e:
-                      print(f"[{datetime.datetime.now()}] CRITICAL ERROR: Failed to restart HTTP server thread: {e}. Exiting.")
+                      logger.critical(f"CRITICAL ERROR: Failed to restart HTTP server thread: {e}. Exiting.", exc_info=True)
                       # Depending on requirements, might want to exit or just log heavily
                       break # Exit the main loop
 
             time.sleep(60) # Check schedule every minute
     except KeyboardInterrupt:
-         print(f"\n[{datetime.datetime.now()}] Ctrl+C received. Shutting down scheduler...")
+         logger.info("Ctrl+C received. Shutting down scheduler...")
          # Server thread is daemon, should exit. Explicit shutdown is handled in run_http_server.
+    except Exception as e:
+        # Catch unexpected errors in the main loop
+        logger.critical(f"Unhandled exception in main loop: {e}", exc_info=True)
     finally:
          # Any other cleanup if needed
-         print(f"[{datetime.datetime.now()}] Main process exiting.")
+         logger.info("Main process exiting.")
 
 if __name__ == "__main__":
     main()
