@@ -1,22 +1,48 @@
 import schedule
 import time
-import threading # For potential state locking if needed
+import threading
+import datetime
+import random
+from dataclasses import dataclass, field
 
 # Import necessary components from other modules
-from config import logger
+from config import logger, CHECK_INTERVAL_MINUTES
 from feed import check_feed
 from summarization import summarize_text_with_langchain
 from output_feed import generate_summary_feed
-from utils import save_processed_ids # Need this for final save in summarization
-from langchain_openai import ChatOpenAI # Type hint for llm
+from utils import save_processed_ids
+from langchain_openai import ChatOpenAI
 
 # --- State Management ---
-# Use a class or dictionary to manage state passed between scheduled jobs
+
+# Define constants for backoff
+INITIAL_BACKOFF_MINUTES = CHECK_INTERVAL_MINUTES # Start backoff at the normal check interval
+MAX_BACKOFF_HOURS = 24
+MAX_BACKOFF_MINUTES = MAX_BACKOFF_HOURS * 60
+BACKOFF_FACTOR = 2 # Exponential backoff factor
+JITTER_FACTOR = 0.2 # Add +/- 20% jitter to backoff
+
+@dataclass
+class FeedState:
+    url: str
+    use_feed_summary: bool
+    last_check_time: datetime.datetime = field(default=datetime.datetime.min)
+    next_check_time: datetime.datetime = field(default_factory=datetime.datetime.now) # Check immediately on start
+    failure_count: int = 0
+    current_backoff_minutes: float = INITIAL_BACKOFF_MINUTES
+    is_checking: bool = False # Flag to prevent concurrent checks for the same feed
+
 class AppState:
-    def __init__(self, processed_ids):
+    def __init__(self, processed_ids: set, feed_urls: list[str], use_feed_summary: bool, initial_check_interval: int):
         self.processed_ids = processed_ids
-        self.articles_buffer = [] # List to store (entry, content_to_summarize)
-        self.lock = threading.Lock() # Lock for thread-safe access to buffer/ids
+        self.articles_buffer = [] # List to store (entry, content_to_summarize, feed_url)
+        self.lock = threading.Lock() # Lock for thread-safe access to buffer/ids/feed_states
+        # Initialize state for each feed
+        self.feed_states: dict[str, FeedState] = {
+            url: FeedState(url=url, use_feed_summary=use_feed_summary, current_backoff_minutes=float(initial_check_interval))
+            for url in feed_urls
+        }
+        self.initial_check_interval = float(initial_check_interval) # Store base interval
 
 # --- Core Summarization Logic (extracted from old summarize_new_articles) ---
 def process_and_summarize(
@@ -32,7 +58,7 @@ def process_and_summarize(
     """Processes buffered articles, generates a combined summary, and updates the feed.
 
     Args:
-        articles_to_process (list): List of (entry, content_to_summarize) tuples.
+        articles_to_process (list): List of (entry, content_to_summarize, feed_url) tuples.
         processed_ids (set): The current set of processed IDs.
         llm (ChatOpenAI): The language model instance.
         model_name (str): Name of the LLM model being used.
@@ -56,10 +82,11 @@ def process_and_summarize(
     articles_included_count = 0
     first_article_link = None # To use as a fallback link for the summary entry
     updated_processed_ids = processed_ids.copy() # Work on a copy for this run
+    included_feeds = set() # Keep track of which feeds contributed
 
     logger.info("-" * 60)
     logger.info("Articles included in this summary batch:")
-    for entry, content_to_summarize in articles_to_process:
+    for entry, content_to_summarize, feed_url in articles_to_process:
         title = entry.get('title', 'No Title')
         link = entry.get('link', 'No Link')
         # Use link as ID if guid/id are missing, crucial for processed_ids tracking
@@ -76,8 +103,10 @@ def process_and_summarize(
         else:
             logger.warning(f"  Could not determine a unique ID for article '{title}'. It might be reprocessed.")
 
+        included_feeds.add(feed_url) # Track the source feed
+
         if content_to_summarize:
-            logger.info(f"  - {title} ({link})")
+            logger.info(f"  - [{feed_url}] {title} ({link})")
             formatted_article = f"Title: {title}\nLink: {link}\n\n{content_to_summarize}\n\n---\n\n"
             combined_content_parts.append(formatted_article)
             articles_included_count += 1
@@ -120,29 +149,73 @@ def process_and_summarize(
     logger.info(f"Finished scheduled summarization. Processed IDs in this batch: {len(articles_processed_this_run)}.")
     logger.info(f"Total unique processed IDs known: {len(updated_processed_ids)}.")
     if combined_content_parts:
-         logger.info(f"Included content from {articles_included_count} articles in the summary generation.")
+         logger.info(f"Included content from {articles_included_count} articles from {len(included_feeds)} feeds in the summary generation.")
+    else:
+        logger.info("No new articles with content were available to generate a summary.")
 
     return updated_processed_ids # Return the final updated set
 
-# --- Scheduling Wrappers --- a
-def scheduled_check_feed_job(app_state: AppState, feed_url: str, use_feed_summary: bool):
-    """Wrapper function for scheduling feed checks. Updates AppState."""
+# --- Scheduling Wrappers ---
+def scheduled_check_feed_job(app_state: AppState, feed_state: FeedState):
+    """Wrapper function for scheduling feed checks for a *single* feed. Updates AppState."""
+    feed_url = feed_state.url
+    use_feed_summary = feed_state.use_feed_summary
+
+    # Set is_checking flag under lock
+    with app_state.lock:
+        if feed_state.is_checking:
+            logger.warning(f"Check for {feed_url} already in progress. Skipping.")
+            return
+        feed_state.is_checking = True
+
     logger.debug(f"Running scheduled check for {feed_url}...")
+    now = datetime.datetime.now()
+    success = False
+    new_entries = []
+    updated_ids = set()
+
     try:
         # Pass the current processed IDs from state
         with app_state.lock:
             current_ids = app_state.processed_ids.copy()
 
-        new_entries, updated_ids = check_feed(feed_url, use_feed_summary, current_ids)
-
-        # Update state under lock
-        with app_state.lock:
-            app_state.articles_buffer.extend(new_entries)
-            app_state.processed_ids = updated_ids # Update with the set returned by check_feed
-            logger.debug(f"Feed check complete. Buffer size: {len(app_state.articles_buffer)}, Processed IDs: {len(app_state.processed_ids)}")
+        new_entries_tuples, updated_ids = check_feed(feed_url, use_feed_summary, current_ids)
+        # Add feed_url to each new entry tuple for tracking in the buffer
+        new_entries = [(entry, content, feed_url) for entry, content in new_entries_tuples]
+        success = True
 
     except Exception as e:
-        logger.error(f"Error during scheduled feed check: {e}", exc_info=True)
+        logger.error(f"Error during scheduled feed check for {feed_url}: {e}", exc_info=False) # Don't need full trace usually
+        success = False
+    finally:
+        # Update state under lock regardless of success/failure
+        with app_state.lock:
+            feed_state.last_check_time = now
+            feed_state.is_checking = False # Reset checking flag
+
+            if success:
+                app_state.articles_buffer.extend(new_entries)
+                app_state.processed_ids = updated_ids # Update with the set returned by check_feed
+                feed_state.failure_count = 0 # Reset failures on success
+                feed_state.current_backoff_minutes = app_state.initial_check_interval # Reset backoff on success
+                logger.info(f"Successfully checked {feed_url}. Added {len(new_entries)} new items. Next check in ~{feed_state.current_backoff_minutes:.1f} min.")
+            else:
+                # Failure: Increase failure count and calculate next backoff
+                feed_state.failure_count += 1
+                backoff = feed_state.current_backoff_minutes * (BACKOFF_FACTOR ** feed_state.failure_count)
+                # Apply jitter: +/- JITTER_FACTOR %
+                jitter = random.uniform(-JITTER_FACTOR, JITTER_FACTOR)
+                backoff_with_jitter = backoff * (1 + jitter)
+                # Cap backoff at MAX_BACKOFF_MINUTES
+                feed_state.current_backoff_minutes = min(backoff_with_jitter, MAX_BACKOFF_MINUTES)
+                logger.warning(f"Failed check for {feed_url} (Attempt {feed_state.failure_count}). Backing off. Next check in ~{feed_state.current_backoff_minutes:.1f} min.")
+
+            # Schedule next check time
+            feed_state.next_check_time = now + datetime.timedelta(minutes=feed_state.current_backoff_minutes)
+            logger.debug(f"Feed {feed_url}: Next check scheduled for {feed_state.next_check_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # Log buffer/ID info outside the lock if needed, using potentially slightly stale data
+    logger.debug(f"Feed check complete for {feed_url}. Buffer size: {len(app_state.articles_buffer)}, Processed IDs: {len(app_state.processed_ids)}")
 
 def scheduled_summarize_job(app_state: AppState, llm: ChatOpenAI, model_name: str, feed_args: dict):
     """Wrapper function for scheduling summarization. Updates AppState."""
@@ -179,20 +252,14 @@ def scheduled_summarize_job(app_state: AppState, llm: ChatOpenAI, model_name: st
         # For now, articles are considered 'lost' for this cycle if summarization fails critically.
         # They were already marked processed by check_feed, preventing reprocessing.
 
-
 # --- Main Scheduling Loop --- (Can be run in a thread)
-def run_scheduler(app_state: AppState, check_interval: int, summary_time: str, feed_url: str, use_feed_summary: bool, llm: ChatOpenAI, model_name: str, feed_args: dict):
+def run_scheduler(app_state: AppState, check_interval: int, summary_time: str, llm: ChatOpenAI, model_name: str, feed_args: dict):
     """Sets up and runs the schedule loop."""
 
-    # --- Schedule the jobs --- 
-    # Schedule the feed check
-    schedule.every(check_interval).minutes.do(
-        scheduled_check_feed_job,
-        app_state=app_state,
-        feed_url=feed_url,
-        use_feed_summary=use_feed_summary
-    )
-    logger.info(f"Scheduled feed check every {check_interval} minutes.")
+    # --- Schedule the jobs ---
+    # The feed check is no longer scheduled with schedule library directly.
+    # We manage the timing within the loop based on feed_state.next_check_time.
+    logger.info(f"Feed checker started. Initial check interval: {app_state.initial_check_interval} minutes (will adjust with backoff).")
 
     # Schedule the daily summary
     schedule.every().day.at(summary_time).do(
@@ -208,15 +275,44 @@ def run_scheduler(app_state: AppState, check_interval: int, summary_time: str, f
 
     # --- Run Loop ---
     while True:
+        now = datetime.datetime.now()
+        feeds_to_check = []
+
+        # --- Check which feeds are due ---
+        with app_state.lock:
+            for feed_url, feed_state in app_state.feed_states.items():
+                if not feed_state.is_checking and now >= feed_state.next_check_time:
+                    feeds_to_check.append(feed_state) # Add the state object
+
+        # --- Trigger checks for due feeds (outside the lock) ---
+        if feeds_to_check:
+            logger.debug(f"Found {len(feeds_to_check)} feeds due for checking.")
+            for feed_state in feeds_to_check:
+                 # Run checks in separate threads? For now, run sequentially.
+                 # If running in threads, need to manage thread pool etc.
+                 try:
+                     scheduled_check_feed_job(app_state, feed_state)
+                 except Exception as e:
+                      # Catch errors here too, although the job itself handles internal errors
+                      logger.error(f"Unexpected error launching check for {feed_state.url}: {e}", exc_info=True)
+                      # We might want to reset the is_checking flag or handle this failure state more robustly
+                      # For now, the finally block in the job should reset is_checking.
+
+        # --- Run scheduled summary job (using schedule library) ---
         try:
             schedule.run_pending()
-            time.sleep(60) # Check every minute
+        except Exception as e:
+            logger.error(f"Error running schedule.run_pending(): {e}", exc_info=True)
+
+        # --- Sleep ---
+        try:
+            # Sleep for a short duration before checking again
+            time.sleep(10) # Check feed states every 10 seconds
         except KeyboardInterrupt:
             logger.info("KeyboardInterrupt received in scheduler loop. Stopping scheduler...")
             break
         except Exception as e:
-            logger.error(f"Unexpected error in scheduler loop: {e}", exc_info=True)
-            # Optionally add a delay before retrying to prevent fast looping on errors
-            time.sleep(60)
+            logger.error(f"Unexpected error in scheduler main loop: {e}", exc_info=True)
+            time.sleep(60) # Sleep longer if there's a loop error
 
     logger.info("Scheduler finished.") 

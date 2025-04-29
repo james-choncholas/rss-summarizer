@@ -12,8 +12,12 @@ if not OPENAI_API_KEY:
     # For now, raise error as logger isn't ready yet.
     raise ValueError("OPENAI_API_KEY not found in environment variables. Please set it in the .env file.")
 
-# Add FEED_URL loading
-FEED_URL = os.getenv("FEED_URL") # Will be None if not set
+_feed_urls_str = os.getenv("FEED_URLS")
+if _feed_urls_str:
+    # Split by comma and strip whitespace from each URL
+    FEED_URLS = [url.strip() for url in _feed_urls_str.split(',') if url.strip()]
+else:
+    FEED_URLS = [] # Default to an empty list if not set
 
 # --- Behavior ---
 REQUEST_DELAY_SECONDS = 1  # Delay between fetching full articles

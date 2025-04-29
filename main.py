@@ -11,7 +11,7 @@ try:
         logger, OPENAI_API_KEY, CHECK_INTERVAL_MINUTES, SUMMARY_TIME,
         DEFAULT_OUTPUT_FEED_FILE, DEFAULT_OUTPUT_FEED_TITLE,
         DEFAULT_OUTPUT_FEED_DESC, DEFAULT_SERVER_PORT, PROCESSED_IDS_FILE,
-        FEED_URL, USE_FEED_SUMMARY, MODEL, TEMPERATURE # Import new variables
+        FEED_URLS, USE_FEED_SUMMARY, MODEL, TEMPERATURE # Use FEED_URLS
     )
 except ImportError as e:
     print(f"Error importing configuration: {e}")
@@ -31,9 +31,9 @@ from scheduler import AppState, scheduled_check_feed_job, scheduled_summarize_jo
 # --- Main Execution ---
 
 def main():
-    parser = argparse.ArgumentParser(description="Monitor an RSS feed, summarize new articles daily, publish to a new RSS feed, and serve it.")
+    parser = argparse.ArgumentParser(description="Monitor RSS feeds, summarize new articles daily, publish to a new RSS feed, and serve it.")
     # Changed feed_url to be optional, defaulting to environment variable
-    parser.add_argument("--feed_url", type=str, default=FEED_URL, help="The URL of the RSS feed to monitor (can also be set via FEED_URL env var).")
+    parser.add_argument("--feed_urls", type=lambda s: [url.strip() for url in s.split(',') if url.strip()], default=FEED_URLS, help="Comma-separated list of RSS feed URLs to monitor (can also be set via FEED_URLS env var).")
     # Use BooleanOptionalAction, default from config (env var)
     parser.add_argument("--use_feed_summary", default=USE_FEED_SUMMARY, action=argparse.BooleanOptionalAction, help="Use summary/description from feed entry directly instead of fetching full article content (can also be set via USE_FEED_SUMMARY env var: true/false).")
     # Default model from config (env var)
@@ -57,9 +57,9 @@ def main():
     args = parser.parse_args()
 
     # --- Validate Arguments ---
-    # Validate Feed URL (must be provided either via env var or arg)
-    if not args.feed_url:
-        logger.error("Feed URL must be provided either via the FEED_URL environment variable or the --feed_url command-line argument.")
+    # Validate Feed URLs
+    if not args.feed_urls:
+        logger.error("Feed URLs must be provided either via the FEED_URLS environment variable (comma-separated) or the --feed_urls command-line argument.")
         exit(1)
 
     try:
@@ -91,7 +91,12 @@ def main():
     logger.info(f"Loaded {len(initial_processed_ids)} processed article IDs from {PROCESSED_IDS_FILE}.")
 
     # Initialize shared state
-    app_state = AppState(initial_processed_ids)
+    app_state = AppState(
+        processed_ids=initial_processed_ids,
+        feed_urls=args.feed_urls, # Pass the list of URLs
+        use_feed_summary=args.use_feed_summary, # Pass the global setting
+        initial_check_interval=args.check_interval # Pass the base interval
+    )
 
     # Initialize LLM
     try:
@@ -107,8 +112,10 @@ def main():
         exit(1)
 
     # --- Log Configuration ---
-    logger.info(f"Monitoring Feed: {args.feed_url}")
-    logger.info(f"Checking every: {args.check_interval} minutes")
+    logger.info(f"Monitoring {len(args.feed_urls)} Feed(s):")
+    for url in args.feed_urls:
+        logger.info(f"  - {url}")
+    logger.info(f"Checking every: {args.check_interval} minutes (initial interval)")
     logger.info(f"Daily Summary Time: {args.summary_time}")
     # Log the final effective value after parsing args
     logger.info(f"Using feed summary directly: {args.use_feed_summary}")
@@ -145,7 +152,13 @@ def main():
     # --- Handle --run_once ---
     if args.run_once:
         logger.info("Performing initial check (--run_once)...")
-        scheduled_check_feed_job(app_state, args.feed_url, args.use_feed_summary)
+        for feed_url in args.feed_urls:
+            logger.info(f"Checking feed (once): {feed_url}")
+            # Call the check job for each feed (assuming updated signature)
+            try:
+                scheduled_check_feed_job(app_state, feed_url, args.use_feed_summary)
+            except Exception as e:
+                logger.error(f"Error checking feed {feed_url} during --run_once: {e}", exc_info=True)
 
         logger.info("Running summary immediately (--run_once)...")
         # We need to get the buffer contents after the check
@@ -180,19 +193,17 @@ def main():
 
 
     # --- Start Scheduler in a Background Thread ---
-    # Perform an initial check immediately on startup before starting the loop
-    logger.info("Performing initial feed check on startup...")
-    scheduled_check_feed_job(app_state, args.feed_url, args.use_feed_summary)
+    # No explicit initial check here; the scheduler's first run will handle it.
 
     # Start the main scheduling loop in a separate thread
     scheduler_thread = threading.Thread(
         target=run_scheduler,
         args=(
-            app_state,
-            args.check_interval,
+            app_state, # Contains feed states (URLs, use_feed_summary, backoff info)
+            args.check_interval, # Used as initial interval and maybe for logging
             args.summary_time,
-            args.feed_url,
-            args.use_feed_summary,
+            # Removed args.feed_urls
+            # Removed args.use_feed_summary
             llm,
             args.model,
             feed_generation_args
