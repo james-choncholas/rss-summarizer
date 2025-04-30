@@ -6,6 +6,10 @@ on:
   schedule:
     - cron: '0 0 * * 0' # Every Sunday at midnight UTC
 
+permissions:
+  contents: read
+  packages: write # Needed to push to GHCR
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -24,7 +28,7 @@ jobs:
       - name: Define image tags
         id: image_tags
         run: |
-          echo "image_local=${{ github.repository }}:latest" >> $GITHUB_ENV
+          echo "image_local=rss-summarizer:latest" >> $GITHUB_ENV
           echo "image_sha=ghcr.io/${{ github.repository }}:${{ github.sha }}" >> $GITHUB_ENV
           echo "image_latest=ghcr.io/${{ github.repository }}:latest" >> $GITHUB_ENV
 
