@@ -26,6 +26,7 @@ USER_AGENT = "RSSSummarizerBot/1.0 (+https://github.com/your-repo/rss-summarizer
 CHECK_INTERVAL_MINUTES = 30 # How often to check the feed (in minutes)
 SUMMARY_TIME = os.getenv("SUMMARY_TIME", "8:00") # Time to run the daily summary (HH:MM)
 MAX_TOKENS = 4096 # Max tokens for the LLM input (including prompt)
+DEFAULT_SYSTEM_PROMPT_TEMPLATE = "Provide a concise combined summary of the following articles:\n\n"
 
 # -- Load behavior settings from environment with defaults --
 # USE_FEED_SUMMARY (Boolean: true/1/yes/y -> True, otherwise False)

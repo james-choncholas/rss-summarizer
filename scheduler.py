@@ -56,6 +56,7 @@ def process_and_summarize(
     processed_ids: set,
     llm: ChatOpenAI,
     model_name: str,
+    system_prompt: str,
     output_feed_file: str,
     output_feed_title: str,
     output_feed_link: str,
@@ -68,6 +69,7 @@ def process_and_summarize(
         processed_ids (set): The current set of processed IDs.
         llm (ChatOpenAI): The language model instance.
         model_name (str): Name of the LLM model being used.
+        system_prompt (str): System prompt for the summary.
         output_feed_file (str): Path to the output RSS file.
         output_feed_title (str): Title for the output RSS feed.
         output_feed_link (str): Link for the output RSS feed.
@@ -128,8 +130,7 @@ def process_and_summarize(
         if combined_content_parts:
             logger.info(f"Generating combined summary for {articles_included_count} articles...")
             combined_content = "".join(combined_content_parts)
-            summary_prompt_prefix = f"Provide a concise combined summary of the following {articles_included_count} articles:\n\n"
-            full_text_to_summarize = summary_prompt_prefix + combined_content
+            full_text_to_summarize = system_prompt + combined_content
 
             combined_summary = summarize_text_with_langchain(full_text_to_summarize, llm, model_name)
 
@@ -233,7 +234,7 @@ def scheduled_check_feed_job(app_state: AppState, feed_state: FeedState):
     # Log buffer/ID info outside the lock if needed, using potentially slightly stale data
     logger.debug(f"Feed check complete for {feed_url}. Buffer size: {len(app_state.articles_buffer)}, Processed IDs: {len(app_state.processed_ids)}")
 
-def scheduled_summarize_job(app_state: AppState, llm: ChatOpenAI, model_name: str, feed_args: dict):
+def scheduled_summarize_job(app_state: AppState, llm: ChatOpenAI, model_name: str, feed_args: dict, system_prompt: str):
     """Wrapper function for scheduling summarization. Updates AppState."""
     logger.debug("Running scheduled summarization job...")
 
@@ -254,6 +255,7 @@ def scheduled_summarize_job(app_state: AppState, llm: ChatOpenAI, model_name: st
             processed_ids=current_ids,
             llm=llm,
             model_name=model_name,
+            system_prompt=system_prompt,
             **feed_args # Pass feed generation arguments directly
         )
 
@@ -269,7 +271,7 @@ def scheduled_summarize_job(app_state: AppState, llm: ChatOpenAI, model_name: st
         # They were already marked processed by check_feed, preventing reprocessing.
 
 # --- Main Scheduling Loop --- (Can be run in a thread)
-def run_scheduler(app_state: AppState, check_interval: int, summary_time: str, llm: ChatOpenAI, model_name: str, feed_args: dict):
+def run_scheduler(app_state: AppState, check_interval: int, summary_time: str, llm: ChatOpenAI, model_name: str, feed_args: dict, system_prompt: str):
     """Sets up and runs the schedule loop."""
 
     # --- Schedule the jobs ---
@@ -283,7 +285,8 @@ def run_scheduler(app_state: AppState, check_interval: int, summary_time: str, l
         app_state=app_state,
         llm=llm,
         model_name=model_name,
-        feed_args=feed_args
+        feed_args=feed_args,
+        system_prompt=system_prompt
     )
     logger.info(f"Scheduled daily summary at {summary_time}.")
 

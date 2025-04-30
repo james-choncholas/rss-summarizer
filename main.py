@@ -11,7 +11,8 @@ try:
         logger, OPENAI_API_KEY, CHECK_INTERVAL_MINUTES, SUMMARY_TIME,
         DEFAULT_OUTPUT_FEED_FILE, DEFAULT_OUTPUT_FEED_TITLE,
         DEFAULT_OUTPUT_FEED_DESC, DEFAULT_SERVER_PORT, PROCESSED_IDS_FILE,
-        FEED_URLS, USE_FEED_SUMMARY, MODEL, TEMPERATURE # Use FEED_URLS
+        FEED_URLS, USE_FEED_SUMMARY, MODEL, TEMPERATURE, # Use FEED_URLS
+        SYSTEM_PROMPT
     )
 except ImportError as e:
     print(f"Error importing configuration: {e}")
@@ -43,6 +44,8 @@ def main():
     parser.add_argument("--check_interval", type=int, default=CHECK_INTERVAL_MINUTES, help=f"How often to check the feed in minutes (default: {CHECK_INTERVAL_MINUTES}).")
     parser.add_argument("--summary_time", type=str, default=SUMMARY_TIME, help=f"Time to run the daily summary in HH:MM format (24-hour clock) (default: {SUMMARY_TIME}).")
     parser.add_argument("--run_once", action="store_true", help="Run the check and summary once immediately, then exit (for testing).")
+    # Added system prompt argument
+    parser.add_argument("--system-prompt", type=str, default=SYSTEM_PROMPT, help="Override the system prompt for the summary.")
     # Output feed arguments
     parser.add_argument("--output_feed_file", type=str, default=DEFAULT_OUTPUT_FEED_FILE, help=f"Filename for the generated summary RSS feed (default: {DEFAULT_OUTPUT_FEED_FILE}).")
     parser.add_argument("--output_feed_title", type=str, default=DEFAULT_OUTPUT_FEED_TITLE, help=f"Title for the generated RSS feed (default: {DEFAULT_OUTPUT_FEED_TITLE}).")
@@ -82,6 +85,10 @@ def main():
         output_link = f"http://{hostname}:{args.port}/{feed_file_part}"
         logger.info(f"Output feed link not specified, defaulting to: {output_link}")
 
+
+    # --- Determine System Prompt ---
+    system_prompt = args.system_prompt
+    log_prompt_display = f"{system_prompt[:100]}..." if len(system_prompt) > 100 else system_prompt
 
     # --- Initialize Components ---
     logger.info("--- RSS Summarizer Bot Initializing ---")
@@ -127,6 +134,7 @@ def main():
     logger.info(f"Output Feed Description: {args.output_feed_description}")
     logger.info(f"Serving feed on port: {args.port}")
     logger.info(f"Serving files from directory: {os.path.abspath(args.serve_dir)}")
+    logger.info(f"System prompt: {system_prompt}")
     logger.info("------------------------------------")
 
 
@@ -173,6 +181,7 @@ def main():
                 processed_ids=current_ids,
                 llm=llm,
                 model_name=args.model,
+                system_prompt=system_prompt,
                 **feed_generation_args
             )
             # No need to update app_state here as we are exiting
@@ -206,7 +215,8 @@ def main():
             # Removed args.use_feed_summary
             llm,
             args.model,
-            feed_generation_args
+            feed_generation_args,
+            system_prompt
         ),
         daemon=True # Allow main thread to exit even if scheduler has issues stopping
     )

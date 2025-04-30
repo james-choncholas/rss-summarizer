@@ -111,6 +111,7 @@ def test_process_and_summarize_no_articles(
         processed_ids=app_state.processed_ids,
         llm=llm_mock,
         model_name="test-model",
+        system_prompt="Test System Prompt",
         **feed_args
     )
 
@@ -156,6 +157,7 @@ def test_process_and_summarize_with_articles(
         processed_ids=initial_ids,
         llm=llm_mock,
         model_name="test-model",
+        system_prompt="Test System Prompt",
         **feed_args
     )
 
@@ -166,7 +168,7 @@ def test_process_and_summarize_with_articles(
     mock_summarize.assert_called_once()
     call_args, _ = mock_summarize.call_args
     text_to_summarize = call_args[0]
-    assert text_to_summarize.startswith("Provide a concise combined summary of the following 3 articles:")
+    assert text_to_summarize.startswith("Test System Prompt")
     assert "Title: Article 1" in text_to_summarize
     assert "Link: http://link1.com" in text_to_summarize
     assert "Content 1" in text_to_summarize
@@ -338,9 +340,16 @@ def test_scheduled_summarize_job_with_buffer(
     llm_mock = Mock()
     model_name = "summary-model"
     feed_args = {"output_feed_file": "summary.xml", "output_feed_title": "Summary"}
+    system_prompt_template = "Test System Prompt Template"
 
     # --- Action ---
-    scheduled_summarize_job(app_state, llm_mock, model_name, feed_args)
+    scheduled_summarize_job(
+        app_state,
+        llm_mock,
+        model_name,
+        feed_args,
+        system_prompt_template
+    )
 
     # --- Assertions ---
     # Check that process_and_summarize was called correctly
@@ -383,9 +392,16 @@ def test_scheduled_summarize_job_empty_buffer(
     llm_mock = Mock()
     model_name = "summary-model"
     feed_args = {"output_feed_file": "summary.xml"}
+    system_prompt_template = "Test System Prompt Template"
 
     # --- Action ---
-    scheduled_summarize_job(app_state, llm_mock, model_name, feed_args)
+    scheduled_summarize_job(
+        app_state,
+        llm_mock,
+        model_name,
+        feed_args,
+        system_prompt_template
+    )
 
     # --- Assertions ---
     mock_process_summarize.assert_not_called() # Should not be called if buffer is empty
@@ -406,13 +422,20 @@ def test_scheduled_summarize_job_process_exception(
     llm_mock = Mock()
     model_name = "summary-model"
     feed_args = {"output_feed_file": "summary.xml"}
+    system_prompt_template = "Test System Prompt Template"
 
     # Mock process_and_summarize to raise an exception
     error_message = "Summarization failed badly!"
     mock_process_summarize.side_effect = Exception(error_message)
 
     # --- Action ---
-    scheduled_summarize_job(app_state, llm_mock, model_name, feed_args)
+    scheduled_summarize_job(
+        app_state,
+        llm_mock,
+        model_name,
+        feed_args,
+        system_prompt_template
+    )
 
     # --- Assertions ---
     mock_process_summarize.assert_called_once() # It was called
