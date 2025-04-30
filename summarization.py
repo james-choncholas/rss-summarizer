@@ -50,10 +50,7 @@ def summarize_text_with_langchain(text_to_summarize, llm: ChatOpenAI, model_name
 
 
     # Use a slightly more robust prompt
-    prompt_template = """Please provide a concise summary of the following text. Focus on the key information and main points.
-
-    TEXT:
-    "{text}"
+    prompt_template = """{text}
 
     CONCISE SUMMARY:"""
     prompt = ChatPromptTemplate.from_template(prompt_template)
