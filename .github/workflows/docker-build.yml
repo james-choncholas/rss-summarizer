@@ -1,0 +1,44 @@
+name: Build Docker Image
+
+on:
+  push:
+    branches: [ main ] # Adjust if you use a different default branch
+  schedule:
+    - cron: '0 0 * * 0' # Every Sunday at midnight UTC
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Define image tags
+        id: image_tags
+        run: |
+          echo "image_local=${{ github.repository }}:latest" >> $GITHUB_ENV
+          echo "image_sha=ghcr.io/${{ github.repository }}:${{ github.sha }}" >> $GITHUB_ENV
+          echo "image_latest=ghcr.io/${{ github.repository }}:latest" >> $GITHUB_ENV
+
+      # Build Docker image
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ env.image_local }} .
+
+      - name: Tag image
+        run: |
+          docker tag ${{ env.image_local }} ${{ env.image_sha }}
+          docker tag ${{ env.image_local }} ${{ env.image_latest }}
+
+      - name: Push image to GHCR
+        run: |
+          docker push ${{ env.image_sha }}
+          docker push ${{ env.image_latest }}
