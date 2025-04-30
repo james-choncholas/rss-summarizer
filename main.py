@@ -8,15 +8,15 @@ import os
 # Ensure config is imported first to set up logging and load environment variables
 try:
     from config import (
-        logger, OPENAI_API_KEY, CHECK_INTERVAL_MINUTES, SUMMARY_TIME,
+        logger, API_KEY, CHECK_INTERVAL_MINUTES, SUMMARY_TIME,
         DEFAULT_OUTPUT_FEED_FILE, DEFAULT_OUTPUT_FEED_TITLE,
         DEFAULT_OUTPUT_FEED_DESC, DEFAULT_SERVER_PORT, PROCESSED_IDS_FILE,
-        FEED_URLS, USE_FEED_SUMMARY, MODEL, TEMPERATURE, # Use FEED_URLS
-        SYSTEM_PROMPT
+        FEED_URLS, USE_FEED_SUMMARY, API_MODEL, TEMPERATURE,
+        SYSTEM_PROMPT, API_URL # Added API_URL
     )
 except ImportError as e:
     print(f"Error importing configuration: {e}")
-    print("Ensure config.py exists and necessary environment variables (like OPENAI_API_KEY) are set.")
+    print("Ensure config.py exists and necessary environment variables (like API_KEY) are set.")
     exit(1)
 except ValueError as e: # Catch specific error from config if API key is missing
     print(f"Configuration error: {e}")
@@ -37,14 +37,15 @@ def main():
     parser.add_argument("--feed_urls", type=lambda s: [url.strip() for url in s.split(',') if url.strip()], default=FEED_URLS, help="Comma-separated list of RSS feed URLs to monitor (can also be set via FEED_URLS env var).")
     # Use BooleanOptionalAction, default from config (env var)
     parser.add_argument("--use_feed_summary", default=USE_FEED_SUMMARY, action=argparse.BooleanOptionalAction, help="Use summary/description from feed entry directly instead of fetching full article content (can also be set via USE_FEED_SUMMARY env var: true/false).")
-    # Default model from config (env var)
-    parser.add_argument("--model", type=str, default=MODEL, help=f"OpenAI model name to use (default from MODEL env var or '{MODEL}').")
-    # Default temperature from config (env var)
+    # API Arguments
+    parser.add_argument("--api_url", type=str, default=API_URL, help="Base URL for the OpenAI-compatible API (can also be set via API_URL env var). Defaults to OpenAI if not set.")
+    parser.add_argument("--api_model", type=str, default=API_MODEL, help=f"API model name to use (default from API_MODEL env var or '{API_MODEL}').") # Renamed from --model
     parser.add_argument("--temperature", type=float, default=TEMPERATURE, help=f"LLM temperature (creativity). Lower is more deterministic (default from TEMPERATURE env var or {TEMPERATURE}).")
+    # Scheduler Arguments
     parser.add_argument("--check_interval", type=int, default=CHECK_INTERVAL_MINUTES, help=f"How often to check the feed in minutes (default: {CHECK_INTERVAL_MINUTES}).")
     parser.add_argument("--summary_time", type=str, default=SUMMARY_TIME, help=f"Time to run the daily summary in HH:MM format (24-hour clock) (default: {SUMMARY_TIME}).")
     parser.add_argument("--run_once", action="store_true", help="Run the check and summary once immediately, then exit (for testing).")
-    # Added system prompt argument
+    # System prompt argument
     parser.add_argument("--system-prompt", type=str, default=SYSTEM_PROMPT, help="Override the system prompt for the summary.")
     # Output feed arguments
     parser.add_argument("--output_feed_file", type=str, default=DEFAULT_OUTPUT_FEED_FILE, help=f"Filename for the generated summary RSS feed (default: {DEFAULT_OUTPUT_FEED_FILE}).")
@@ -53,7 +54,6 @@ def main():
     parser.add_argument("--output_feed_description", type=str, default=DEFAULT_OUTPUT_FEED_DESC, help=f"Description for the generated RSS feed (default: {DEFAULT_OUTPUT_FEED_DESC}).")
     # Server argument
     parser.add_argument("--port", type=int, default=DEFAULT_SERVER_PORT, help=f"Port to serve the RSS feed on (default: {DEFAULT_SERVER_PORT}).")
-    # Added argument to specify serving directory
     parser.add_argument("--serve_dir", type=str, default=".", help="Directory to serve files from (default: current directory).")
 
 
@@ -88,7 +88,6 @@ def main():
 
     # --- Determine System Prompt ---
     system_prompt = args.system_prompt
-    log_prompt_display = f"{system_prompt[:100]}..." if len(system_prompt) > 100 else system_prompt
 
     # --- Initialize Components ---
     logger.info("--- RSS Summarizer Bot Initializing ---")
@@ -107,15 +106,25 @@ def main():
 
     # Initialize LLM
     try:
-        llm = ChatOpenAI(
-            model_name=args.model,
-            temperature=args.temperature,
-            openai_api_key=OPENAI_API_KEY
-        )
+        llm_params = {
+            "model_name": args.api_model, # Use renamed arg
+            "temperature": args.temperature,
+            "openai_api_key": API_KEY # Use renamed config var
+        }
+        # Conditionally add base_url if provided
+        if args.api_url:
+            llm_params["base_url"] = args.api_url
+            logger.info(f"Using custom API URL: {args.api_url}")
+        else:
+            logger.info("Using default OpenAI API URL.")
+
+        llm = ChatOpenAI(**llm_params)
+
         # Optional: Test LLM connection? Could add a simple invoke test here.
-        logger.info(f"Initialized LLM: {args.model} (Temperature: {args.temperature})")
+        logger.info(f"Initialized LLM: {args.api_model} (Temperature: {args.temperature})")
+
     except Exception as e:
-        logger.error(f"Failed to initialize OpenAI LLM: {e}", exc_info=True)
+        logger.error(f"Failed to initialize LLM: {e}", exc_info=True)
         exit(1)
 
     # --- Log Configuration ---
@@ -126,7 +135,7 @@ def main():
     logger.info(f"Daily Summary Time: {args.summary_time}")
     # Log the final effective value after parsing args
     logger.info(f"Using feed summary directly: {args.use_feed_summary}")
-    logger.info(f"Using Model: {args.model}") # Log the model being used
+    logger.info(f"Using API Model: {args.api_model}") # Log the model being used.
     logger.info(f"Using Temperature: {args.temperature}") # Log the temperature
     logger.info(f"Output Feed File: {args.output_feed_file}")
     logger.info(f"Output Feed Title: {args.output_feed_title}")
@@ -134,7 +143,7 @@ def main():
     logger.info(f"Output Feed Description: {args.output_feed_description}")
     logger.info(f"Serving feed on port: {args.port}")
     logger.info(f"Serving files from directory: {os.path.abspath(args.serve_dir)}")
-    logger.info(f"System prompt: {system_prompt}")
+    logger.info(f"System prompt: {f"{system_prompt[:100]}..." if len(system_prompt) > 100 else system_prompt}")
     logger.info("------------------------------------")
 
 
@@ -180,7 +189,7 @@ def main():
                 articles_to_process=buffer_copy,
                 processed_ids=current_ids,
                 llm=llm,
-                model_name=args.model,
+                model_name=args.api_model,
                 system_prompt=system_prompt,
                 **feed_generation_args
             )
@@ -214,7 +223,7 @@ def main():
             # Removed args.feed_urls
             # Removed args.use_feed_summary
             llm,
-            args.model,
+            args.api_model,
             feed_generation_args,
             system_prompt
         ),

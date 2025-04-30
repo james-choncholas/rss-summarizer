@@ -20,10 +20,10 @@ def reload_config():
     importlib.reload(config)
 
 def test_openai_api_key_present(monkeypatch):
-    """Test that OPENAI_API_KEY is loaded correctly."""
-    monkeypatch.setenv("OPENAI_API_KEY", "test_key_123")
+    """Test that API_KEY is loaded correctly."""
+    monkeypatch.setenv("API_KEY", "test_key_123")
     importlib.reload(config)
-    assert config.OPENAI_API_KEY == "test_key_123"
+    assert config.API_KEY == "test_key_123"
 
 def test_feed_urls_parsing(monkeypatch):
     """Test parsing of FEED_URLS from environment variable."""
@@ -64,17 +64,17 @@ def test_use_feed_summary_default(monkeypatch):
     assert config.USE_FEED_SUMMARY is False
 
 def test_model_loading(monkeypatch):
-    """Test loading MODEL from environment and its default."""
+    """Test loading API_MODEL from environment and its default."""
      # Test default
-    if "MODEL" in os.environ:
-        del os.environ["MODEL"]
+    if "API_MODEL" in os.environ:
+        del os.environ["API_MODEL"]
     importlib.reload(config)
-    assert config.MODEL == "gpt-3.5-turbo"
+    assert config.API_MODEL == "gpt-4o-mini"
 
     # Test custom value
-    monkeypatch.setenv("MODEL", "gpt-4")
+    monkeypatch.setenv("API_MODEL", "gpt-4")
     importlib.reload(config)
-    assert config.MODEL == "gpt-4"
+    assert config.API_MODEL == "gpt-4"
 
 def test_temperature_loading(monkeypatch):
     """Test loading TEMPERATURE from environment, its default, and error handling."""
