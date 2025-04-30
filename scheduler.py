@@ -27,7 +27,7 @@ class FeedState:
     url: str
     use_feed_summary: bool
     last_check_time: datetime.datetime = field(default=datetime.datetime.min)
-    next_check_time: datetime.datetime = field(default_factory=datetime.datetime.now) # Check immediately on start
+    next_check_time: datetime.datetime = field(default=datetime.datetime.min) # Placeholder
     failure_count: int = 0
     current_backoff_minutes: float = INITIAL_BACKOFF_MINUTES
     is_checking: bool = False # Flag to prevent concurrent checks for the same feed
@@ -38,8 +38,14 @@ class AppState:
         self.articles_buffer = [] # List to store (entry, content_to_summarize, feed_url)
         self.lock = threading.Lock() # Lock for thread-safe access to buffer/ids/feed_states
         # Initialize state for each feed
+        now = datetime.datetime.now() # Get current time (respects freeze_time)
         self.feed_states: dict[str, FeedState] = {
-            url: FeedState(url=url, use_feed_summary=use_feed_summary, current_backoff_minutes=float(initial_check_interval))
+            url: FeedState(
+                url=url,
+                use_feed_summary=use_feed_summary,
+                current_backoff_minutes=float(initial_check_interval),
+                next_check_time=now # Explicitly set creation time
+            )
             for url in feed_urls
         }
         self.initial_check_interval = float(initial_check_interval) # Store base interval
@@ -72,65 +78,70 @@ def process_and_summarize(
     """
     logger.info(f"Starting scheduled summarization process...")
 
+    # Initialize updated_processed_ids early, copying the input set
+    updated_processed_ids = processed_ids.copy()
+
     if not articles_to_process:
         logger.info("No new articles in the buffer to summarize.")
-        return processed_ids # Return unchanged set
-
-    logger.info(f"Preparing summary for {len(articles_to_process)} new articles/entries...")
-    articles_processed_this_run = set() # IDs processed in *this* specific summary run
-    combined_content_parts = []
-    articles_included_count = 0
-    first_article_link = None # To use as a fallback link for the summary entry
-    updated_processed_ids = processed_ids.copy() # Work on a copy for this run
-    included_feeds = set() # Keep track of which feeds contributed
-
-    logger.info("-" * 60)
-    logger.info("Articles included in this summary batch:")
-    for entry, content_to_summarize, feed_url in articles_to_process:
-        title = entry.get('title', 'No Title')
-        link = entry.get('link', 'No Link')
-        # Use link as ID if guid/id are missing, crucial for processed_ids tracking
-        article_id = entry.get('guid') or entry.get('id') or link
-
-        if not first_article_link and link != 'No Link':
-            first_article_link = link
-
-        # Add the ID to the set of articles processed in this specific run
-        # We already added it to updated_processed_ids in check_feed, but we track
-        # it here again to know which IDs correspond to *this batch*
-        if article_id and article_id != 'No Link':
-            articles_processed_this_run.add(article_id)
-        else:
-            logger.warning(f"  Could not determine a unique ID for article '{title}'. It might be reprocessed.")
-
-        included_feeds.add(feed_url) # Track the source feed
-
-        if content_to_summarize:
-            logger.info(f"  - [{feed_url}] {title} ({link})")
-            formatted_article = f"Title: {title}\nLink: {link}\n\n{content_to_summarize}\n\n---\n\n"
-            combined_content_parts.append(formatted_article)
-            articles_included_count += 1
-        else:
-            logger.info(f"  - Skipping content for '{title}' ({link}) - No content available.")
-
-    combined_summary = None # Initialize to None
-    if combined_content_parts:
-        logger.info(f"Generating combined summary for {articles_included_count} articles...")
-        combined_content = "".join(combined_content_parts)
-        summary_prompt_prefix = f"Provide a concise combined summary of the following {articles_included_count} articles:\n\n"
-        full_text_to_summarize = summary_prompt_prefix + combined_content
-
-        combined_summary = summarize_text_with_langchain(full_text_to_summarize, llm, model_name)
-
-        logger.info("--- Combined Daily Summary ---")
-        logger.info(combined_summary)
-        logger.info("--- End of Summary ---")
+        # Still generate an empty/placeholder feed if requested
+        combined_summary = "No new articles to summarize for this period."
+        first_article_link = None
+        # Skip directly to feed generation and ID saving/return
     else:
-        logger.info("No content available from buffered articles to generate a combined summary.")
-        combined_summary = "No new content available to summarize for this period." # Provide a placeholder
+        logger.info(f"Preparing summary for {len(articles_to_process)} new articles/entries...")
+        articles_processed_this_run = set() # IDs processed in *this* specific summary run
+        combined_content_parts = []
+        articles_included_count = 0
+        first_article_link = None # To use as a fallback link for the summary entry
+        included_feeds = set() # Keep track of which feeds contributed
 
-    # --- RSS Feed Generation ---
-    # Call the dedicated feed generation function
+        logger.info("-" * 60)
+        logger.info("Articles included in this summary batch:")
+        for entry, content_to_summarize, feed_url in articles_to_process:
+            title = entry.get('title', 'No Title')
+            link = entry.get('link', 'No Link')
+            # Use link as ID if guid/id are missing, crucial for processed_ids tracking
+            article_id = entry.get('guid') or entry.get('id') or link
+
+            if not first_article_link and link != 'No Link':
+                first_article_link = link
+
+            # Add the ID to the set of articles processed in this specific run
+            # AND to the main updated_processed_ids set
+            if article_id and article_id != 'No Link':
+                articles_processed_this_run.add(article_id)
+                updated_processed_ids.add(article_id) # <-- FIX: Add to the main set
+            else:
+                logger.warning(f"  Could not determine a unique ID for article '{title}'. It might be reprocessed.")
+
+            included_feeds.add(feed_url) # Track the source feed
+
+            if content_to_summarize:
+                logger.info(f"  - [{feed_url}] {title} ({link})")
+                formatted_article = f"Title: {title}\nLink: {link}\n\n{content_to_summarize}\n\n---\n\n"
+                combined_content_parts.append(formatted_article)
+                articles_included_count += 1
+            else:
+                logger.info(f"  - Skipping content for '{title}' ({link}) - No content available.")
+
+        combined_summary = None # Initialize to None
+        if combined_content_parts:
+            logger.info(f"Generating combined summary for {articles_included_count} articles...")
+            combined_content = "".join(combined_content_parts)
+            summary_prompt_prefix = f"Provide a concise combined summary of the following {articles_included_count} articles:\n\n"
+            full_text_to_summarize = summary_prompt_prefix + combined_content
+
+            combined_summary = summarize_text_with_langchain(full_text_to_summarize, llm, model_name)
+
+            logger.info("--- Combined Daily Summary ---")
+            logger.info(combined_summary)
+            logger.info("--- End of Summary ---")
+        else:
+            logger.info("No content available from buffered articles to generate a combined summary.")
+            combined_summary = "No new content available to summarize for this period." # Provide a placeholder
+
+    # --- RSS Feed Generation (Now runs even if articles_to_process was empty) ---
+    logger.info(f"Generating RSS feed: {output_feed_file}")
     generate_summary_feed(
         output_feed_file=output_feed_file,
         output_feed_title=output_feed_title,
@@ -140,20 +151,25 @@ def process_and_summarize(
         first_article_link=first_article_link
     )
 
-    # Persist the processed IDs (this was done in check_feed, but saving again ensures consistency
-    # if summarize runs less frequently or if check_feed saving failed)
-    # Note: save_processed_ids overwrites the file with the current set.
+    # Persist the processed IDs
+    # If articles_to_process was empty, updated_processed_ids is still the original set
+    # If it wasn't empty, updated_processed_ids now contains the newly processed IDs
     save_processed_ids(updated_processed_ids)
 
     logger.info("-" * 60)
-    logger.info(f"Finished scheduled summarization. Processed IDs in this batch: {len(articles_processed_this_run)}.")
-    logger.info(f"Total unique processed IDs known: {len(updated_processed_ids)}.")
-    if combined_content_parts:
-         logger.info(f"Included content from {articles_included_count} articles from {len(included_feeds)} feeds in the summary generation.")
+    # Adjust logging based on whether articles were actually processed
+    if articles_to_process:
+        logger.info(f"Finished scheduled summarization. Processed IDs in this batch: {len(articles_processed_this_run)}.")
+        logger.info(f"Total unique processed IDs known: {len(updated_processed_ids)}.")
+        if combined_content_parts:
+            logger.info(f"Included content from {articles_included_count} articles from {len(included_feeds)} feeds in the summary generation.")
+        else:
+            logger.info("No new articles with content were available to generate a summary.")
     else:
-        logger.info("No new articles with content were available to generate a summary.")
+        logger.info("Finished scheduled summarization. No new articles were processed.")
+        logger.info(f"Total unique processed IDs known: {len(updated_processed_ids)}.")
 
-    return updated_processed_ids # Return the final updated set
+    return updated_processed_ids # Return the potentially updated set
 
 # --- Scheduling Wrappers ---
 def scheduled_check_feed_job(app_state: AppState, feed_state: FeedState):

@@ -7,3 +7,5 @@ python-dotenv
 tiktoken
 schedule
 feedgen
+pytest
+freezegun
