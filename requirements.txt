@@ -9,3 +9,4 @@ schedule
 feedgen
 pytest
 freezegun
+langchain
