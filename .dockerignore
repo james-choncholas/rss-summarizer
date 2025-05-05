@@ -11,3 +11,4 @@ venv/
 .vscode/
 processed_article_ids.json
 *.log 
+data/
