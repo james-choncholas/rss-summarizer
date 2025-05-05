@@ -8,18 +8,18 @@ from utils import save_processed_ids
 from article import fetch_article_content
 
 def fetch_rss_feed(feed_url):
-    """Fetches and parses the RSS feed."""
+    """Fetches and parses the RSS feed.
+    
+    Raises an exception if the feed is invalid or empty."""
     logger.info(f"Fetching RSS feed: {feed_url}")
-    try:
-        feed = feedparser.parse(feed_url)
-        if feed.bozo:
-            logger.warning(f"Feed may be malformed. Bozo reason: {feed.bozo_exception}")
-        if not feed.entries:
-            logger.warning("No entries found in the feed.")
-        return feed.entries
-    except Exception as e:
-        logger.error(f"Error fetching or parsing feed {feed_url}: {e}")
-        return []
+    feed = feedparser.parse(feed_url)
+    if feed.bozo:
+        logger.warning(f"RSS feed fetch exception. Bozo reason: {feed.bozo_exception}")
+        raise Exception(f"RSS feed fetch exception. Bozo reason: {feed.bozo_exception}")
+    if not feed.entries:
+        logger.warning("No entries found in the feed.")
+        raise Exception("No entries found in the feed.")
+    return feed.entries
 
 def check_feed(feed_url, use_feed_summary, processed_ids):
     """Checks the feed for new articles and returns a list of new entries with their content.
@@ -33,6 +33,9 @@ def check_feed(feed_url, use_feed_summary, processed_ids):
         tuple: A tuple containing:
             - list: A list of tuples, where each inner tuple is (entry, content_to_summarize).
             - set: The updated set of processed article IDs.
+
+    Raises:
+        Exception: If the feed is invalid, empty, or cannot be read.
     """
     logger.info(f"Checking feed: {feed_url}")
     entries = fetch_rss_feed(feed_url)
