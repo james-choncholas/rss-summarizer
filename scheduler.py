@@ -279,6 +279,22 @@ def run_scheduler(app_state: AppState, check_interval: int, summary_time: str, l
     # We manage the timing within the loop based on feed_state.next_check_time.
     logger.info(f"Feed checker started. Initial check interval: {app_state.initial_check_interval} minutes (will adjust with backoff).")
 
+    # Schedule initial summary to run soon after startup (one time only)
+    initial_summary_delay = 5 # Minutes
+    initial_summary_time = datetime.datetime.now() + datetime.timedelta(minutes=initial_summary_delay)
+    def one_time_summary():
+        scheduled_summarize_job(
+            app_state=app_state,
+            llm=llm,
+            model_name=model_name,
+            feed_args=feed_args,
+            system_prompt=system_prompt
+        )
+        return schedule.CancelJob  # This makes the job run only once
+    
+    schedule.every(initial_summary_delay).minutes.do(one_time_summary)
+    logger.info(f"Scheduled initial summary in {initial_summary_delay} minutes from startup.")
+
     # Schedule the daily summary
     schedule.every().day.at(summary_time).do(
         scheduled_summarize_job,
