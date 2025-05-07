@@ -25,14 +25,11 @@ def summarize_text_with_langchain(text_to_summarize, llm: ChatOpenAI, model_name
 
     logger.info("  Summarizing text...")
 
-    # Check token count BEFORE creating prompt/chain
-    # Estimate max tokens for the prompt itself
-    prompt_overhead_estimate = 50 # Rough estimate
-    available_tokens_for_text = MAX_TOKENS - prompt_overhead_estimate
+    # Check token count BEFORE creating prompt/chain.
     text_tokens = count_tokens(text_to_summarize, model=model_name)
 
-    if text_tokens > available_tokens_for_text:
-        logger.warning(f"  Warning: Text ({text_tokens} tokens) exceeds model's {MAX_TOKENS} limit (estimated). Truncating text...")
+    if text_tokens > MAX_TOKENS:
+        logger.warning(f"  Warning: Text ({text_tokens} tokens) exceeds MAX_TOKENS ({MAX_TOKENS}) limit. Truncating text...")
         # Truncate based on token count directly for better accuracy
         try:
             encoding = tiktoken.encoding_for_model(model_name)
@@ -40,7 +37,7 @@ def summarize_text_with_langchain(text_to_summarize, llm: ChatOpenAI, model_name
             encoding = tiktoken.get_encoding("cl100k_base") # Fallback encoding
 
         tokens = encoding.encode(text_to_summarize)
-        truncated_tokens = tokens[:available_tokens_for_text]
+        truncated_tokens = tokens[:MAX_TOKENS]
         text_to_summarize = encoding.decode(truncated_tokens)
         # Log the new token count after truncation
         final_token_count = count_tokens(text_to_summarize, model=model_name)

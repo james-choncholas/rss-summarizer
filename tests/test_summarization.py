@@ -128,8 +128,7 @@ def test_summarize_long_text_truncation(mock_parser, mock_prompt_template, mock_
     # Need WARNING level to capture truncation warnings
     with caplog.at_level(logging.WARNING, logger=target_logger.name):
         model_name = "gpt-3.5-turbo"
-        prompt_overhead_estimate = 50
-        available_tokens_for_text = MAX_TOKENS - prompt_overhead_estimate
+        available_tokens_for_text = MAX_TOKENS
 
         # Create text guaranteed to be longer than the limit using real words
         # Calculate the target token count we need to exceed
@@ -155,6 +154,7 @@ def test_summarize_long_text_truncation(mock_parser, mock_prompt_template, mock_
             encoding = tiktoken.get_encoding("cl100k_base")
 
         tokens = encoding.encode(long_text)
+        print(f"Available tokens for text: {available_tokens_for_text}")
         truncated_tokens = tokens[:available_tokens_for_text]
         expected_truncated_text = encoding.decode(truncated_tokens)
         # Recalculate final_token_count based on the decoded truncated text
@@ -178,7 +178,7 @@ def test_summarize_long_text_truncation(mock_parser, mock_prompt_template, mock_
 
         assert summary == expected_summary
         # Check logs for truncation warnings
-        assert f"  Warning: Text ({initial_token_count} tokens) exceeds model's {MAX_TOKENS} limit (estimated). Truncating text..." in caplog.text
+        assert f"  Warning: Text ({initial_token_count} tokens) exceeds MAX_TOKENS ({MAX_TOKENS}) limit. Truncating text..." in caplog.text
         assert f"  Truncated text to {final_token_count} tokens." in caplog.text
         # Verify the *truncated* text was passed to the chain
         mock_chain.invoke.assert_called_once_with({"text": expected_truncated_text})
