@@ -5,6 +5,7 @@ on:
     branches: [ main ] # Adjust if you use a different default branch
   schedule:
     - cron: '0 0 * * 0' # Every Sunday at midnight UTC
+  workflow_dispatch: # Allows manual triggering
 
 permissions:
   contents: read
