@@ -52,6 +52,7 @@ DEFAULT_OUTPUT_FEED_FILE = os.getenv("OUTPUT_FEED_FILE", "output/summary_feed.xm
 DEFAULT_OUTPUT_FEED_TITLE = os.getenv("OUTPUT_FEED_TITLE", "Daily Summarized Feed")
 DEFAULT_OUTPUT_FEED_DESC = os.getenv("OUTPUT_FEED_DESC", "Summaries of articles from monitored feeds.")
 DEFAULT_SERVER_PORT = int(os.getenv("SERVER_PORT", 8000))
+DEFAULT_OUTPUT_FEED_LINK = os.getenv("OUTPUT_FEED_LINK", f"http://localhost:{DEFAULT_SERVER_PORT}/{DEFAULT_OUTPUT_FEED_FILE.lstrip('/')}")
 
 # --- Persistence ---
 PROCESSED_IDS_FILE = os.getenv("PROCESSED_IDS_FILE", "data/processed_ids.json")

@@ -50,7 +50,7 @@ def main():
     # Output feed arguments
     parser.add_argument("--output_feed_file", type=str, default=DEFAULT_OUTPUT_FEED_FILE, help=f"Filename for the generated summary RSS feed (default: {DEFAULT_OUTPUT_FEED_FILE}).")
     parser.add_argument("--output_feed_title", type=str, default=DEFAULT_OUTPUT_FEED_TITLE, help=f"Title for the generated RSS feed (default: {DEFAULT_OUTPUT_FEED_TITLE}).")
-    parser.add_argument("--output_feed_link", type=str, default=None, help="Base Link for the generated RSS feed (default: http://localhost:[port]/[output_file]).")
+    parser.add_argument("--output_feed_link", type=str, default=DEFAULT_OUTPUT_FEED_LINK, help="Base Link for the generated RSS feed (default: http://localhost:[port]/[output_file]).")
     parser.add_argument("--output_feed_description", type=str, default=DEFAULT_OUTPUT_FEED_DESC, help=f"Description for the generated RSS feed (default: {DEFAULT_OUTPUT_FEED_DESC}).")
     # Server argument
     parser.add_argument("--port", type=int, default=DEFAULT_SERVER_PORT, help=f"Port to serve the RSS feed on (default: {DEFAULT_SERVER_PORT}).")
@@ -74,20 +74,6 @@ def main():
     if args.check_interval <= 0:
         logger.error(f"check_interval must be a positive number of minutes.")
         exit(1)
-
-    # Construct the output feed link if not provided
-    output_link = args.output_feed_link
-    if output_link is None:
-        # Ensure the filename doesn't start with / if we prepend http info
-        feed_file_part = args.output_feed_file.lstrip('/')
-        # Basic check if running locally or could be improved with hostname detection
-        hostname = "localhost"
-        output_link = f"http://{hostname}:{args.port}/{feed_file_part}"
-        logger.info(f"Output feed link not specified, defaulting to: {output_link}")
-
-
-    # --- Determine System Prompt ---
-    system_prompt = args.system_prompt
 
     # --- Initialize Components ---
     logger.info("--- RSS Summarizer Bot Initializing ---")
@@ -139,11 +125,11 @@ def main():
     logger.info(f"Using Temperature: {args.temperature}") # Log the temperature
     logger.info(f"Output Feed File: {args.output_feed_file}")
     logger.info(f"Output Feed Title: {args.output_feed_title}")
-    logger.info(f"Output Feed Link: {output_link}") # Use the final calculated link
+    logger.info(f"Output Feed Link: {args.output_feed_link}") # Use the final calculated link
     logger.info(f"Output Feed Description: {args.output_feed_description}")
     logger.info(f"Serving feed on port: {args.port}")
     logger.info(f"Serving files from directory: {os.path.abspath(args.serve_dir)}")
-    logger.info(f"System prompt: {f"{system_prompt[:100]}..." if len(system_prompt) > 100 else system_prompt}")
+    logger.info(f"System prompt: {f"{args.system_prompt[:100]}..." if len(args.system_prompt) > 100 else args.system_prompt}")
     logger.info("------------------------------------")
 
 
@@ -151,7 +137,7 @@ def main():
     feed_generation_args = {
         'output_feed_file': args.output_feed_file,
         'output_feed_title': args.output_feed_title,
-        'output_feed_link': output_link,
+        'output_feed_link': args.system_prompt,
         'output_feed_description': args.output_feed_description,
     }
 
@@ -190,7 +176,7 @@ def main():
                 processed_ids=current_ids,
                 llm=llm,
                 model_name=args.api_model,
-                system_prompt=system_prompt,
+                system_prompt=args.system_prompt,
                 **feed_generation_args
             )
             # No need to update app_state here as we are exiting
@@ -199,7 +185,7 @@ def main():
              logger.info("Run once complete. No new articles found to summarize.")
 
 
-        logger.info(f"Feed generated (if new articles found) and served at {output_link}")
+        logger.info(f"Feed generated (if new articles found) and served at {args.system_prompt}")
         logger.info("Press Ctrl+C to stop serving.")
         try:
             # Keep main thread alive only to keep server thread running
@@ -220,12 +206,10 @@ def main():
             app_state, # Contains feed states (URLs, use_feed_summary, backoff info)
             args.check_interval, # Used as initial interval and maybe for logging
             args.summary_time,
-            # Removed args.feed_urls
-            # Removed args.use_feed_summary
             llm,
             args.api_model,
             feed_generation_args,
-            system_prompt
+            ags.system_prompt
         ),
         daemon=True # Allow main thread to exit even if scheduler has issues stopping
     )
@@ -233,7 +217,7 @@ def main():
 
 
     # --- Keep Main Thread Alive (and Monitor Server) ---
-    logger.info(f"Scheduler thread started. Feed available at {output_link}")
+    logger.info(f"Scheduler thread started. Feed available at {args.system_prompt}")
     try:
         while True:
             if not server_thread.is_alive():
