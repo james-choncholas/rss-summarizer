@@ -57,8 +57,9 @@ DEFAULT_SERVER_PORT = int(os.getenv("SERVER_PORT", 8000))
 PROCESSED_IDS_FILE = os.getenv("PROCESSED_IDS_FILE", "data/processed_ids.json")
 
 # --- Prompting ---
+DEFAULT_MAX_TOKENS = 4096 # Max tokens for the LLM input (including prompt)
+MAX_TOKENS = int(os.getenv("MAX_TOKENS", DEFAULT_MAX_TOKENS)) # Max tokens for the LLM input
 # Default system prompt - loaded from env var or defaults to this string
-MAX_TOKENS = 4096 # Max tokens for the LLM input (including prompt)
 DEFAULT_SYSTEM_PROMPT = """You are an expert summarizer. Given the following article text, provide a concise summary (around 2-4 sentences) focusing on the key information. Respond ONLY with the summary text, no preamble or extra phrases like "Here is the summary:". Be objective and accurate."""
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
 
