@@ -12,7 +12,6 @@ def generate_summary_feed(
     output_feed_link,
     output_feed_description,
     combined_summary,
-    first_article_link # Used as a fallback link for the summary entry
 ):
     """Generates or updates the summary RSS feed file with a new summary entry."""
     logger.info(f"\nGenerating RSS feed entry and updating {output_feed_file}...")
@@ -95,9 +94,8 @@ def generate_summary_feed(
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         fe.published(now_utc)
         fe.updated(now_utc)
-        # Link: Use the feed link or the first article link as a fallback
-        entry_link = first_article_link or output_feed_link
-        fe.link(href=entry_link)
+        if output_feed_link:
+            fe.link(href=entry_link)
         # Content: Use the generated summary
         # Ensure summary is not None or empty before setting content
         fe.content(combined_summary or "Summary could not be generated.", type='text') # Assuming summary is plain text

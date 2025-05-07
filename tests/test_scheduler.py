@@ -187,7 +187,6 @@ def test_process_and_summarize_with_articles(
         output_feed_link="http://example.com",
         output_feed_description="Test Desc",
         combined_summary=mock_summary,
-        first_article_link="http://link1.com" # Link of the first article with content
     )
 
     # Check processed IDs saving

@@ -87,14 +87,12 @@ def process_and_summarize(
         logger.info("No new articles in the buffer to summarize.")
         # Still generate an empty/placeholder feed if requested
         combined_summary = "No new articles to summarize for this period."
-        first_article_link = None
         # Skip directly to feed generation and ID saving/return
     else:
         logger.info(f"Preparing summary for {len(articles_to_process)} new articles/entries...")
         articles_processed_this_run = set() # IDs processed in *this* specific summary run
         combined_content_parts = []
         articles_included_count = 0
-        first_article_link = None # To use as a fallback link for the summary entry
         included_feeds = set() # Keep track of which feeds contributed
 
         logger.info("-" * 60)
@@ -104,9 +102,6 @@ def process_and_summarize(
             link = entry.get('link', 'No Link')
             # Use link as ID if guid/id are missing, crucial for processed_ids tracking
             article_id = entry.get('guid') or entry.get('id') or link
-
-            if not first_article_link and link != 'No Link':
-                first_article_link = link
 
             # Add the ID to the set of articles processed in this specific run
             # AND to the main updated_processed_ids set
@@ -149,7 +144,6 @@ def process_and_summarize(
         output_feed_link=output_feed_link,
         output_feed_description=output_feed_description,
         combined_summary=combined_summary,
-        first_article_link=first_article_link
     )
 
     # Persist the processed IDs
