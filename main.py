@@ -10,9 +10,9 @@ try:
     from config import (
         logger, API_KEY, CHECK_INTERVAL_MINUTES, SUMMARY_TIME,
         DEFAULT_OUTPUT_FEED_FILE, DEFAULT_OUTPUT_FEED_TITLE,
-        DEFAULT_OUTPUT_FEED_DESC, DEFAULT_SERVER_PORT, PROCESSED_IDS_FILE,
-        FEED_URLS, USE_FEED_SUMMARY, API_MODEL, TEMPERATURE,
-        SYSTEM_PROMPT, API_URL # Added API_URL
+        DEFAULT_OUTPUT_FEED_DESC, DEFAULT_SERVER_PORT, DEFAULT_OUTPUT_FEED_LINK,
+        PROCESSED_IDS_FILE, FEED_URLS, USE_FEED_SUMMARY, API_MODEL, TEMPERATURE,
+        SYSTEM_PROMPT, API_URL
     )
 except ImportError as e:
     print(f"Error importing configuration: {e}")
@@ -209,7 +209,7 @@ def main():
             llm,
             args.api_model,
             feed_generation_args,
-            ags.system_prompt
+            args.system_prompt
         ),
         daemon=True # Allow main thread to exit even if scheduler has issues stopping
     )
