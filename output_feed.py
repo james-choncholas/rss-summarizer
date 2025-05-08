@@ -95,7 +95,7 @@ def generate_summary_feed(
         fe.published(now_utc)
         fe.updated(now_utc)
         if output_feed_link:
-            fe.link(href=entry_link)
+            fe.link(href=output_feed_link)
         # Content: Use the generated summary
         # Ensure summary is not None or empty before setting content
         fe.content(combined_summary or "Summary could not be generated.", type='text') # Assuming summary is plain text
