@@ -137,7 +137,7 @@ def main():
     feed_generation_args = {
         'output_feed_file': args.output_feed_file,
         'output_feed_title': args.output_feed_title,
-        'output_feed_link': args.system_prompt,
+        'output_feed_link': args.output_feed_link,
         'output_feed_description': args.output_feed_description,
     }
 
