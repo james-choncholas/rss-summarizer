@@ -60,7 +60,8 @@ def process_and_summarize(
     output_feed_file: str,
     output_feed_title: str,
     output_feed_link: str,
-    output_feed_description: str
+    output_feed_description: str,
+    extended_history_file: str,
 ) -> set:
     """Processes buffered articles, generates a combined summary, and updates the feed.
 
@@ -144,6 +145,7 @@ def process_and_summarize(
         output_feed_link=output_feed_link,
         output_feed_description=output_feed_description,
         combined_summary=combined_summary,
+        extended_history_file=extended_history_file,
     )
 
     # Persist the processed IDs
@@ -274,20 +276,20 @@ def run_scheduler(app_state: AppState, check_interval: int, summary_time: str, l
     logger.info(f"Feed checker started. Initial check interval: {app_state.initial_check_interval} minutes (will adjust with backoff).")
 
     # Schedule initial summary to run soon after startup (one time only)
-    initial_summary_delay = 5 # Minutes
-    initial_summary_time = datetime.datetime.now() + datetime.timedelta(minutes=initial_summary_delay)
-    def one_time_summary():
-        scheduled_summarize_job(
-            app_state=app_state,
-            llm=llm,
-            model_name=model_name,
-            feed_args=feed_args,
-            system_prompt=system_prompt
-        )
-        return schedule.CancelJob  # This makes the job run only once
+    # initial_summary_delay = 5 # Minutes
+    # initial_summary_time = datetime.datetime.now() + datetime.timedelta(minutes=initial_summary_delay)
+    # def one_time_summary():
+    #     scheduled_summarize_job(
+    #         app_state=app_state,
+    #         llm=llm,
+    #         model_name=model_name,
+    #         feed_args=feed_args,
+    #         system_prompt=system_prompt
+    #     )
+    #     return schedule.CancelJob  # This makes the job run only once
     
-    schedule.every(initial_summary_delay).minutes.do(one_time_summary)
-    logger.info(f"Scheduled initial summary in {initial_summary_delay} minutes from startup.")
+    # schedule.every(initial_summary_delay).minutes.do(one_time_summary)
+    # logger.info(f"Scheduled initial summary in {initial_summary_delay} minutes from startup.")
 
     # Schedule the daily summary
     schedule.every().day.at(summary_time).do(

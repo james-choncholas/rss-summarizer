@@ -3,7 +3,6 @@ import time
 
 # Import logger and utils
 from config import logger
-from utils import save_processed_ids
 # Import article functions (fetch_article_content might be called within check_feed)
 from article import fetch_article_content
 
@@ -81,8 +80,6 @@ def check_feed(feed_url, use_feed_summary, processed_ids):
             # logger.debug(f"  Skipping already processed article: {entry.get('title', 'No Title')}")
 
     logger.info(f"Finished checking feed. Found {len(new_entries_found)} new articles.")
-    if ids_to_save: # Only save if new IDs were actually added in this run
-         save_processed_ids(updated_processed_ids) # Save the updated full set
 
     # Return the new entries found and the updated set of processed IDs for this run
     return new_entries_found, updated_processed_ids 

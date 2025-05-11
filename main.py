@@ -11,8 +11,8 @@ try:
         logger, API_KEY, CHECK_INTERVAL_MINUTES, SUMMARY_TIME,
         DEFAULT_OUTPUT_FEED_FILE, DEFAULT_OUTPUT_FEED_TITLE,
         DEFAULT_OUTPUT_FEED_DESC, DEFAULT_SERVER_PORT, DEFAULT_OUTPUT_FEED_LINK,
-        PROCESSED_IDS_FILE, FEED_URLS, USE_FEED_SUMMARY, API_MODEL, TEMPERATURE,
-        SYSTEM_PROMPT, API_URL
+        FEED_HISTORY_FILE, PROCESSED_IDS_FILE, FEED_URLS,
+        USE_FEED_SUMMARY, API_MODEL, TEMPERATURE, SYSTEM_PROMPT, API_URL
     )
 except ImportError as e:
     print(f"Error importing configuration: {e}")
@@ -139,6 +139,7 @@ def main():
         'output_feed_title': args.output_feed_title,
         'output_feed_link': args.output_feed_link,
         'output_feed_description': args.output_feed_description,
+        'extended_history_file': FEED_HISTORY_FILE,
     }
 
     # --- Start HTTP Server ---

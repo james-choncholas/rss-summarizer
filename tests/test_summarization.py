@@ -154,7 +154,6 @@ def test_summarize_long_text_truncation(mock_parser, mock_prompt_template, mock_
             encoding = tiktoken.get_encoding("cl100k_base")
 
         tokens = encoding.encode(long_text)
-        print(f"Available tokens for text: {available_tokens_for_text}")
         truncated_tokens = tokens[:available_tokens_for_text]
         expected_truncated_text = encoding.decode(truncated_tokens)
         # Recalculate final_token_count based on the decoded truncated text

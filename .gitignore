@@ -1,6 +1,5 @@
 venv
 __pycache__
 .env
-processed_article_ids.json
-summary_feed.xml
 data/
+output/

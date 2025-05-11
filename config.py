@@ -56,6 +56,7 @@ DEFAULT_OUTPUT_FEED_LINK = os.getenv("OUTPUT_FEED_LINK", f"http://localhost:{DEF
 
 # --- Persistence ---
 PROCESSED_IDS_FILE = os.getenv("PROCESSED_IDS_FILE", "data/processed_ids.json")
+FEED_HISTORY_FILE = os.getenv("FEED_HISTORY_FILE", "data/summary_feed_history.xml")
 
 # --- Prompting ---
 DEFAULT_MAX_TOKENS = 4096 # Max tokens for the LLM input (including prompt)

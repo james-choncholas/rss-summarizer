@@ -104,6 +104,7 @@ def test_process_and_summarize_no_articles(
         "output_feed_title": "Test Title",
         "output_feed_link": "http://example.com",
         "output_feed_description": "Test Desc",
+        "extended_history_file": "test_history.xml",
     }
 
     updated_ids = process_and_summarize(
@@ -150,6 +151,7 @@ def test_process_and_summarize_with_articles(
         "output_feed_title": "Test Title",
         "output_feed_link": "http://example.com",
         "output_feed_description": "Test Desc",
+        "extended_history_file": "test_history.xml",
     }
 
     updated_ids = process_and_summarize(
@@ -187,6 +189,7 @@ def test_process_and_summarize_with_articles(
         output_feed_link="http://example.com",
         output_feed_description="Test Desc",
         combined_summary=mock_summary,
+        extended_history_file="test_history.xml",
     )
 
     # Check processed IDs saving
