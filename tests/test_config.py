@@ -25,18 +25,20 @@ def test_api_key_present(monkeypatch):
     importlib.reload(config)
     assert config.API_KEY == "test_key_123"
 
-# def test_api_key_missing(monkeypatch):
-#     """Test that ValueError is raised if API_KEY is not set."""
-#     # Temporarily remove the API_KEY to test the validation
-#     if "API_KEY" in os.environ:
-#         monkeypatch.delenv("API_KEY", raising=False)
-#     
-#     # The ValueError is raised when the module is loaded, so we need to reload it
-#     with pytest.raises(ValueError, match="API_KEY environment variable not set."):
-#         importlib.reload(config)
-# 
-#     # Restore the API_KEY for other tests
-#     monkeypatch.setenv("API_KEY", "dummy_key_for_testing")
+def test_api_key_missing(monkeypatch):
+    """Test that ValueError is raised if API_KEY is not set."""
+    # Temporarily remove the API_KEY to test the validation
+    if "API_KEY" in os.environ:
+        monkeypatch.delenv("API_KEY", raising=False)
+
+    # Mock load_dotenv to prevent it from loading a .env file
+    with mock.patch('dotenv.load_dotenv'):
+        # The ValueError is raised when the module is loaded, so we need to reload it
+        with pytest.raises(ValueError, match="API_KEY environment variable not set."):
+            importlib.reload(config)
+
+    # Restore the API_KEY for other tests
+    monkeypatch.setenv("API_KEY", "dummy_key_for_testing")
 
 
 def test_feed_urls_parsing(monkeypatch):
