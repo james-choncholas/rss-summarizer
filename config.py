@@ -38,8 +38,8 @@ FEED_URLS = [url.strip() for url in feed_urls_str.split(',') if url.strip()]
 use_feed_summary_str = os.getenv("USE_FEED_SUMMARY", "false")
 USE_FEED_SUMMARY = use_feed_summary_str.lower() in ('true', '1', 't', 'yes', 'y')
 
-REQUEST_DELAY_SECONDS = 1  # Delay between fetching full articles
-REQUEST_TIMEOUT_SECONDS = 15 # Timeout for fetching article content
+REQUEST_DELAY_SECONDS = int(os.getenv("REQUEST_DELAY_SECONDS", 1))  # Delay between fetching full articles
+REQUEST_TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", 15)) # Timeout for fetching article content
 USER_AGENT = "RSSSummarizerBot/1.0 (+https://github.com/your-repo/rss-summarizer)" # User agent for requests
 
 # --- Scheduler Configuration ---
@@ -50,7 +50,7 @@ SUMMARY_TIME = os.getenv("SUMMARY_TIME", "08:00") # Time for daily summary (HH:M
 # --- Output Feed Configuration ---
 DEFAULT_OUTPUT_FEED_FILE = os.getenv("OUTPUT_FEED_FILE", "output/summary_feed.xml")
 DEFAULT_OUTPUT_FEED_TITLE = os.getenv("OUTPUT_FEED_TITLE", "Daily Summarized Feed")
-DEFAULT_OUTPUT_FEED_DESC = os.getenv("OUTPUT_FEED_DESC", "Summaries of articles from monitored feeds.")
+DEFAULT_OUTPUT_FEED_DESC = os.getenv("DEFAULT_OUTPUT_FEED_DESC", "Summaries of articles from monitored feeds.")
 DEFAULT_SERVER_PORT = int(os.getenv("SERVER_PORT", 8000))
 DEFAULT_OUTPUT_FEED_LINK = os.getenv("OUTPUT_FEED_LINK", f"http://localhost:{DEFAULT_SERVER_PORT}/{DEFAULT_OUTPUT_FEED_FILE.lstrip('/')}")
 

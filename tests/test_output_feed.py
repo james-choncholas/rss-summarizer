@@ -76,9 +76,9 @@ def test_generate_feed_with_existing_history(mock_os_exists, mock_fg, mock_parse
 @patch("output_feed.feedparser.parse")
 @patch("output_feed.FeedGenerator")
 @patch("output_feed.os.path.exists", return_value=True)
-def test_generate_feed_truncates_to_10(mock_os_exists, mock_fg, mock_parse, mock_logger, temp_feed_files):
+def test_generate_feed_truncates_to_max(mock_os_exists, mock_fg, mock_parse, mock_logger, temp_feed_files):
     output_feed_file, extended_history_file = temp_feed_files
-    # Simulate 15 old entries
+    # Simulate more than MAX_FEED_ENTRIES old entries
     old_entries = [
         {
             'title': f'Old {i}',
@@ -87,7 +87,7 @@ def test_generate_feed_truncates_to_10(mock_os_exists, mock_fg, mock_parse, mock
             'updated': datetime.datetime(2024, 5, i+1, tzinfo=datetime.timezone.utc),
             'link': 'http://example.com',
             'content': f'Content {i}'
-        } for i in range(15)
+        } for i in range(MAX_FEED_ENTRIES + 5)
     ]
     mock_parse.return_value = MagicMock(entries=old_entries, bozo=False)
     fg_output = MagicMock()
@@ -103,11 +103,10 @@ def test_generate_feed_truncates_to_10(mock_os_exists, mock_fg, mock_parse, mock
         extended_history_file=extended_history_file
     )
 
-    # Only MAX_FEED_ENTRIES entries should be added to the output feed (the first FeedGenerator instance)
-    # A new entry plus the first MAX_FEED_ENTRIES - 1 from the old_entries should make MAX_FEED_ENTRIES total
+    # Only MAX_FEED_ENTRIES entries should be added to the output feed
     assert fg_output.add_entry.call_count == MAX_FEED_ENTRIES
-    # All entries (15 old ones + 1 new one) should be added to the history feed
-    assert fg_history.add_entry.call_count == 16
+    # All entries (old ones + 1 new one) should be added to the history feed
+    assert fg_history.add_entry.call_count == len(old_entries) + 1
     fg_output.rss_file.assert_called()
     fg_history.rss_file.assert_called()
 
@@ -162,3 +161,25 @@ def test_generate_feed_write_error(mock_fg, mock_parse, mock_logger, temp_feed_f
     )
     # Should also try to write the output feed and log error
     assert mock_logger.error.call_count >= 1
+
+@patch("output_feed.logger")
+@patch("output_feed.feedparser.parse")
+@patch("output_feed.FeedGenerator")
+def test_generate_feed_no_summary(mock_fg, mock_parse, mock_logger, temp_feed_files):
+    """Test that a new entry is not created when the combined_summary is None."""
+    output_feed_file, extended_history_file = temp_feed_files
+    mock_parse.return_value = MagicMock(entries=[], bozo=False)
+    fg_instance = MagicMock()
+    mock_fg.return_value = fg_instance
+
+    output_feed.generate_summary_feed(
+        output_feed_file=output_feed_file,
+        output_feed_title="Test Feed",
+        output_feed_link="http://example.com",
+        output_feed_description="A test feed",
+        combined_summary=None,
+        extended_history_file=extended_history_file
+    )
+
+    # If summary is None, no new entry should be added.
+    fg_instance.add_entry.assert_not_called()

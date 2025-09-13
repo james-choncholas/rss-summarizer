@@ -19,11 +19,25 @@ def reload_config():
     # Revert fixture changes - we'll use setattr/delattr or monkeypatch
     importlib.reload(config)
 
-def test_openai_api_key_present(monkeypatch):
+def test_api_key_present(monkeypatch):
     """Test that API_KEY is loaded correctly."""
     monkeypatch.setenv("API_KEY", "test_key_123")
     importlib.reload(config)
     assert config.API_KEY == "test_key_123"
+
+# def test_api_key_missing(monkeypatch):
+#     """Test that ValueError is raised if API_KEY is not set."""
+#     # Temporarily remove the API_KEY to test the validation
+#     if "API_KEY" in os.environ:
+#         monkeypatch.delenv("API_KEY", raising=False)
+#     
+#     # The ValueError is raised when the module is loaded, so we need to reload it
+#     with pytest.raises(ValueError, match="API_KEY environment variable not set."):
+#         importlib.reload(config)
+# 
+#     # Restore the API_KEY for other tests
+#     monkeypatch.setenv("API_KEY", "dummy_key_for_testing")
+
 
 def test_feed_urls_parsing(monkeypatch):
     """Test parsing of FEED_URLS from environment variable."""
@@ -35,12 +49,6 @@ def test_feed_urls_empty_string(monkeypatch):
     """Test FEED_URLS is empty list when env var is empty string."""
     monkeypatch.setenv("FEED_URLS", "")
     importlib.reload(config)
-    assert config.FEED_URLS == []
-
-def test_feed_urls_not_set(monkeypatch):
-    """Test FEED_URLS is empty list when env var is not set (by directly setting)."""
-    # Directly modify the config variable for this test
-    monkeypatch.setattr(config, "FEED_URLS", [])
     assert config.FEED_URLS == []
 
 def test_use_feed_summary_true_values(monkeypatch):
@@ -57,17 +65,11 @@ def test_use_feed_summary_false_values(monkeypatch):
         importlib.reload(config)
         assert config.USE_FEED_SUMMARY is False
 
-def test_use_feed_summary_default(monkeypatch):
-    """Test USE_FEED_SUMMARY defaults to False when not set (by directly setting)."""
-    # Directly modify the config variable for this test
-    monkeypatch.setattr(config, "USE_FEED_SUMMARY", False)
-    assert config.USE_FEED_SUMMARY is False
-
 def test_model_loading(monkeypatch):
     """Test loading API_MODEL from environment and its default."""
-     # Test default
+    # Test default
     if "API_MODEL" in os.environ:
-        del os.environ["API_MODEL"]
+        monkeypatch.delenv("API_MODEL")
     importlib.reload(config)
     assert config.API_MODEL == "gpt-4o-mini"
 
@@ -79,9 +81,9 @@ def test_model_loading(monkeypatch):
 def test_temperature_loading(monkeypatch):
     """Test loading TEMPERATURE from environment, its default, and error handling."""
     default_temp = 0.3
-     # Test default
+    # Test default
     if "TEMPERATURE" in os.environ:
-        del os.environ["TEMPERATURE"]
+        monkeypatch.delenv("TEMPERATURE")
     importlib.reload(config)
     assert config.TEMPERATURE == default_temp
 
@@ -90,13 +92,42 @@ def test_temperature_loading(monkeypatch):
     importlib.reload(config)
     assert config.TEMPERATURE == 0.7
 
-    # Test invalid custom value (should use default and log warning - check log?)
-    # Note: Checking logs requires more setup (e.g., caplog fixture)
-    # For now, we just check if it falls back to the default.
+    # Test invalid custom value
     monkeypatch.setenv("TEMPERATURE", "invalid-temp")
     importlib.reload(config)
     assert config.TEMPERATURE == default_temp
 
-# You can add more tests here for other constants like:
-# REQUEST_DELAY_SECONDS, REQUEST_TIMEOUT_SECONDS, USER_AGENT, CHECK_INTERVAL_MINUTES,
-# SUMMARY_TIME, MAX_TOKENS, PROCESSED_IDS_FILE, etc. following the same pattern. 
+def test_request_delay_seconds(monkeypatch):
+    monkeypatch.setenv("REQUEST_DELAY_SECONDS", "5")
+    importlib.reload(config)
+    assert config.REQUEST_DELAY_SECONDS == 5
+
+def test_request_timeout_seconds(monkeypatch):
+    monkeypatch.setenv("REQUEST_TIMEOUT_SECONDS", "20")
+    importlib.reload(config)
+    assert config.REQUEST_TIMEOUT_SECONDS == 20
+
+def test_check_interval_minutes(monkeypatch):
+    monkeypatch.setenv("CHECK_INTERVAL_MINUTES", "60")
+    importlib.reload(config)
+    assert config.CHECK_INTERVAL_MINUTES == 60
+
+def test_summary_time(monkeypatch):
+    monkeypatch.setenv("SUMMARY_TIME", "10:00")
+    importlib.reload(config)
+    assert config.SUMMARY_TIME == "10:00"
+
+def test_max_tokens(monkeypatch):
+    monkeypatch.setenv("MAX_TOKENS", "8192")
+    importlib.reload(config)
+    assert config.MAX_TOKENS == 8192
+
+def test_processed_ids_file(monkeypatch, tmp_path):
+    # Create a temporary directory for the test
+    d = tmp_path / "data"
+    d.mkdir()
+    test_file = d / "test_ids.json"
+    
+    monkeypatch.setenv("PROCESSED_IDS_FILE", str(test_file))
+    importlib.reload(config)
+    assert config.PROCESSED_IDS_FILE == str(test_file)
