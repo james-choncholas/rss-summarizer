@@ -5,6 +5,7 @@ import pytest
 from unittest.mock import patch, MagicMock, mock_open
 
 import output_feed
+from output_feed import MAX_FEED_ENTRIES
 
 @pytest.fixture
 def temp_feed_files():
@@ -102,9 +103,9 @@ def test_generate_feed_truncates_to_10(mock_os_exists, mock_fg, mock_parse, mock
         extended_history_file=extended_history_file
     )
 
-    # Only 10 entries should be added to the output feed (the first FeedGenerator instance)
-    # A new entry plus the first 9 from the old_entries should make 10 total
-    assert fg_output.add_entry.call_count == 10
+    # Only MAX_FEED_ENTRIES entries should be added to the output feed (the first FeedGenerator instance)
+    # A new entry plus the first MAX_FEED_ENTRIES - 1 from the old_entries should make MAX_FEED_ENTRIES total
+    assert fg_output.add_entry.call_count == MAX_FEED_ENTRIES
     # All entries (15 old ones + 1 new one) should be added to the history feed
     assert fg_history.add_entry.call_count == 16
     fg_output.rss_file.assert_called()
@@ -130,15 +131,11 @@ def test_generate_feed_handles_parse_error(mock_os_exists, mock_fg, mock_parse, 
 
     # Should still create a feed even if parse fails
     fg_instance.rss_file.assert_called()
-    # Check logger.warning was called with the expected message and exc_info=True (positional or keyword)
-    found = False
-    expected_msg = f"  Warning: Could not load or parse extended history file {extended_history_file}: Parse error. Starting with a new history."
-    for call in mock_logger.warning.call_args_list:
-        args, kwargs = call
-        if args and expected_msg in args[0] and (len(args) > 1 and args[1] == True or kwargs.get('exc_info') is True):
-            found = True
-            break
-    assert found, "Expected warning log for parse error not found."
+    # Check that the logger was warned about the parse error specifically.
+    mock_logger.warning.assert_any_call(
+        f"  Warning: Could not load or parse extended history file {extended_history_file}: Parse error. Starting with a new history.",
+        exc_info=True
+    )
 
 @patch("output_feed.logger")
 @patch("output_feed.feedparser.parse")

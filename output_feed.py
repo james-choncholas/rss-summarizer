@@ -6,6 +6,8 @@ from feedgen.feed import FeedGenerator
 # Import logger from config
 from config import logger
 
+MAX_FEED_ENTRIES = 10
+
 def generate_summary_feed(
     output_feed_file,
     output_feed_title,
@@ -81,7 +83,7 @@ def generate_summary_feed(
         logger.error(f"  Error saving extended history file to {extended_history_file}: {e}")
 
     # Truncate to at most 10 posts for the output feed
-    truncated_entries = all_entries[:10]
+    truncated_entries = all_entries[:MAX_FEED_ENTRIES]
 
     # Add truncated entries to the FeedGenerator object
     for entry in truncated_entries:
