@@ -70,7 +70,10 @@ def generate_summary_feed(
             fe.updated(entry.get('updated'))
             if entry.get('link'):
                 fe.link(href=entry.get('link'))
-            fe.content(entry.get('content'), type='text')
+            # To ensure content is always present, check summary and description as fallbacks
+            content = entry.get('content') or entry.get('summary') or entry.get('description')
+            if content:
+                fe.content(content, type='text')
 
         history_fg.rss_file(extended_history_file, pretty=True)
         logger.info(f"  Successfully updated extended history file: {extended_history_file}")
@@ -89,7 +92,11 @@ def generate_summary_feed(
         fe.updated(entry.get('updated'))
         if entry.get('link'):
             fe.link(href=entry.get('link'))
-        fe.content(entry.get('content'), type='text')
+        
+        # To ensure content is always present, check summary and description as fallbacks
+        content = entry.get('content') or entry.get('summary') or entry.get('description')
+        if content:
+            fe.content(content, type='text')
 
     # Save the truncated feed
     try:
